@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(npm run dev:*)",
+      "Bash(timeout:*)",
+      "Bash(grep:*)",
+      "Bash(npm run lint:*)",
+      "Bash(find:*)",
+      "Bash(npm audit:*)",
+      "Bash(powershell -Command \"Get-Content -Path ''src/pages/Branches.tsx'' -Tail 3\")",
+      "Bash(ls:*)",
+      "Bash(xargs cat:*)"
+    ]
+  }
+}
