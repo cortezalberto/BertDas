@@ -1,8 +1,12 @@
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { PageContainer } from '../components/layout/PageContainer'
 import { GitBranch } from 'lucide-react'
 import { helpContent } from '../utils/helpContent'
 
 export function HistoryBranchesPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Historial por Sucursal')
+
   return (
     <PageContainer
       title="Historial por Sucursales"

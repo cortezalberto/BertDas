@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Filter, Save, DollarSign, Percent } from 'lucide-react'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { PageContainer } from '../components/layout'
 import {
   Card,
@@ -37,6 +38,9 @@ interface PriceEdit {
 }
 
 export function PricesPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Precios')
+
   const navigate = useNavigate()
 
   const categories = useCategoryStore(selectCategories)

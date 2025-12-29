@@ -10,6 +10,7 @@
  */
 
 import type { Branch, Category, Subcategory, Product, Allergen, PromotionType, Promotion, RestaurantTable, OrderHistory } from '../types'
+import { logWarning } from '../utils/logger'
 
 /**
  * Store interfaces for dependency injection
@@ -101,7 +102,8 @@ function validateExists<T extends { id: string }>(
 ): T | null {
   const item = items.find((i) => i.id === id)
   if (!item) {
-    console.warn(`${entityName} with id ${id} not found for cascade delete`)
+    // SPRINT 8: Use centralized logger instead of console.warn
+    logWarning(`${entityName} with id ${id} not found for cascade delete`, 'cascadeService')
     return null
   }
   return item

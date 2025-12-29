@@ -1,4 +1,5 @@
 import { useRef, useCallback } from 'react'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { PageContainer } from '../components/layout'
 import { Card, CardHeader, Button, ConfirmDialog } from '../components/ui'
 import { RefreshCw, Trash2, Download, Upload } from 'lucide-react'
@@ -28,6 +29,9 @@ function clearAllStorageData(): void {
 }
 
 export function SettingsPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Configuración')
+
   // Using selectors
   const categories = useCategoryStore(selectCategories)
   const setCategories = useCategoryStore((s) => s.setCategories)

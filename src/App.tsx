@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/layout'
 import { ErrorBoundary } from './components/ui'
+import { useInitializeStaffRoles } from './hooks/useInitializeStaffRoles'
 
 // Lazy load all pages for better performance and code splitting
 const DashboardPage = lazy(() => import('./pages/Dashboard'))
@@ -9,6 +10,7 @@ const RestaurantPage = lazy(() => import('./pages/Restaurant'))
 const BranchesPage = lazy(() => import('./pages/Branches'))
 const TablesPage = lazy(() => import('./pages/Tables'))
 const StaffPage = lazy(() => import('./pages/Staff'))
+const RolesPage = lazy(() => import('./pages/Roles'))
 const OrdersPage = lazy(() => import('./pages/Orders'))
 const CategoriesPage = lazy(() => import('./pages/Categories'))
 const SubcategoriesPage = lazy(() => import('./pages/Subcategories'))
@@ -38,6 +40,9 @@ function PageLoader() {
 }
 
 function App() {
+  // Initialize staff roles on app startup
+  useInitializeStaffRoles()
+
   return (
     <ErrorBoundary>
       <BrowserRouter>
@@ -80,6 +85,14 @@ function App() {
               element={
                 <Suspense fallback={<PageLoader />}>
                   <StaffPage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="branches/staff/roles"
+              element={
+                <Suspense fallback={<PageLoader />}>
+                  <RolesPage />
                 </Suspense>
               }
             />

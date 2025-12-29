@@ -3,6 +3,7 @@ import { Building2 } from 'lucide-react'
 import { PageContainer } from '../components/layout'
 import { Card, CardHeader, Button, Input, Textarea, ImageUpload } from '../components/ui'
 import { useRestaurantStore, selectRestaurant } from '../stores/restaurantStore'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { toast } from '../stores/toastStore'
 import { validateRestaurant, type ValidationErrors } from '../utils/validation'
 import { handleError } from '../utils/logger'
@@ -17,6 +18,9 @@ type FormState = {
 }
 
 export function RestaurantPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Restaurante')
+
   // Use selectors to avoid unnecessary re-renders
   const restaurant = useRestaurantStore(selectRestaurant)
   const createRestaurant = useRestaurantStore((s) => s.createRestaurant)

@@ -1,5 +1,7 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useActionState } from 'react'
 import { Plus, Pencil, Trash2, Shield } from 'lucide-react'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import { useFormModal, useConfirmDialog, usePagination } from '../hooks'
 import { PageContainer } from '../components/layout'
 import {
   Card,
@@ -12,13 +14,13 @@ import {
   Badge as UIBadge,
   Pagination,
 } from '../components/ui'
-import { usePagination } from '../hooks/usePagination'
 import { useSealStore, selectSeals } from '../stores/sealStore'
 import { useProductStore, selectProducts } from '../stores/productStore'
 import { toast } from '../stores/toastStore'
-import { validateSeal, type ValidationErrors } from '../utils/validation'
+import { validateSeal } from '../utils/validation'
 import { handleError } from '../utils/logger'
 import type { ProductSeal, SealFormData, TableColumn } from '../types'
+import type { FormState } from '../types/form'
 
 const initialFormData: SealFormData = {
   name: '',
@@ -28,6 +30,9 @@ const initialFormData: SealFormData = {
 }
 
 export default function SealsPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Sellos')
+
   const seals = useSealStore(selectSeals)
   const addSeal = useSealStore((s) => s.addSeal)
   const updateSeal = useSealStore((s) => s.updateSeal)
@@ -36,12 +41,9 @@ export default function SealsPage() {
   const products = useProductStore(selectProducts)
   const removeSealFromProducts = useProductStore((s) => s.removeSealFromProducts)
 
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [isDeleteOpen, setIsDeleteOpen] = useState(false)
-  const [selectedSeal, setSelectedSeal] = useState<ProductSeal | null>(null)
-  const [formData, setFormData] = useState<SealFormData>(initialFormData)
-  const [errors, setErrors] = useState<ValidationErrors<SealFormData>>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  // SPRINT 13: Use custom hooks for modal and dialog state
+  const modal = useFormModal<SealFormData>(initialFormData)
+  const deleteDialog = useConfirmDialog<ProductSeal>()
 
   const sortedSeals = useMemo(
     () => [...seals].sort((a, b) => a.name.localeCompare(b.name)),
@@ -64,68 +66,77 @@ export default function SealsPage() {
     [products]
   )
 
+  // REACT 19 IMPROVEMENT: Use useActionState for form handling
+  const submitAction = useCallback(
+    async (_prevState: FormState<SealFormData>, formData: FormData): Promise<FormState<SealFormData>> => {
+      const data: SealFormData = {
+        name: formData.get('name') as string,
+        color: formData.get('color') as string,
+        icon: formData.get('icon') as string,
+        is_active: formData.get('is_active') === 'on',
+      }
+
+      const validation = validateSeal(data)
+      if (!validation.isValid) {
+        return { errors: validation.errors, isSuccess: false }
+      }
+
+      try {
+        if (modal.selectedItem) {
+          updateSeal(modal.selectedItem.id, data)
+          toast.success('Sello actualizado correctamente')
+        } else {
+          addSeal(data)
+          toast.success('Sello creado correctamente')
+        }
+        return { isSuccess: true, message: 'Guardado correctamente' }
+      } catch (error) {
+        const message = handleError(error, 'SealsPage.submitAction')
+        toast.error(`Error al guardar el sello: ${message}`)
+        return { isSuccess: false, message: `Error: ${message}` }
+      }
+    },
+    [modal.selectedItem, updateSeal, addSeal]
+  )
+
+  const [state, formAction, isPending] = useActionState<FormState<SealFormData>, FormData>(
+    submitAction,
+    { isSuccess: false }
+  )
+
+  // SPRINT 13: Close modal on success using modal.close()
+  if (state.isSuccess && modal.isOpen) {
+    modal.close()
+  }
+
+  // SPRINT 13: Simplified modal handlers using custom hook
   const openCreateModal = useCallback(() => {
-    setSelectedSeal(null)
-    setFormData(initialFormData)
-    setErrors({})
-    setIsModalOpen(true)
-  }, [])
+    modal.openCreate(initialFormData)
+  }, [modal])
 
   const openEditModal = useCallback((seal: ProductSeal) => {
-    setSelectedSeal(seal)
-    setFormData({
+    modal.openEdit(seal, {
       name: seal.name,
       color: seal.color || '#10b981',
       icon: seal.icon || '',
       is_active: seal.is_active ?? true,
     })
-    setErrors({})
-    setIsModalOpen(true)
-  }, [])
+  }, [modal])
 
-  const openDeleteDialog = useCallback((seal: ProductSeal) => {
-    setSelectedSeal(seal)
-    setIsDeleteOpen(true)
-  }, [])
-
-  const handleSubmit = useCallback(() => {
-    const validation = validateSeal(formData)
-    if (!validation.isValid) {
-      setErrors(validation.errors)
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      if (selectedSeal) {
-        updateSeal(selectedSeal.id, formData)
-        toast.success('Sello actualizado correctamente')
-      } else {
-        addSeal(formData)
-        toast.success('Sello creado correctamente')
-      }
-      setIsModalOpen(false)
-    } catch (error) {
-      const message = handleError(error, 'SealsPage.handleSubmit')
-      toast.error(`Error al guardar el sello: ${message}`)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }, [formData, selectedSeal, updateSeal, addSeal])
-
+  // SPRINT 13: Simplified delete handler
   const handleDelete = useCallback(() => {
-    if (!selectedSeal) return
+    if (!deleteDialog.item) return
 
     try {
-      const productCount = getProductCount(selectedSeal.name)
+      const productCount = getProductCount(deleteDialog.item.name)
 
       // Remove seal from products if needed
       if (removeSealFromProducts && productCount > 0) {
-        removeSealFromProducts(selectedSeal.name)
+        removeSealFromProducts(deleteDialog.item.name)
       }
 
       // Delete seal
-      deleteSeal(selectedSeal.id)
+      deleteSeal(deleteDialog.item.id)
 
       if (productCount > 0) {
         toast.warning(
@@ -134,12 +145,12 @@ export default function SealsPage() {
       }
 
       toast.success('Sello eliminado correctamente')
-      setIsDeleteOpen(false)
+      deleteDialog.close()
     } catch (error) {
       const message = handleError(error, 'SealsPage.handleDelete')
       toast.error(`Error al eliminar el sello: ${message}`)
     }
-  }, [selectedSeal, getProductCount, deleteSeal, removeSealFromProducts])
+  }, [deleteDialog, getProductCount, deleteSeal, removeSealFromProducts])
 
   const columns: TableColumn<ProductSeal>[] = useMemo(
     () => [
@@ -214,7 +225,7 @@ export default function SealsPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => openDeleteDialog(seal)}
+                onClick={() => deleteDialog.open(seal)}
                 aria-label={`Eliminar ${seal.name}`}
                 disabled={productCount > 0}
                 title={
@@ -230,7 +241,7 @@ export default function SealsPage() {
         },
       },
     ],
-    [getProductCount, openEditModal, openDeleteDialog]
+    [getProductCount, openEditModal, deleteDialog.open]
   )
 
   return (
@@ -262,43 +273,45 @@ export default function SealsPage() {
           />
         </Card>
 
-        {/* Create/Edit Modal */}
+        {/* SPRINT 13: Modal using useFormModal hook */}
         <Modal
-          isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
-          title={selectedSeal ? 'Editar Sello' : 'Nuevo Sello'}
+          isOpen={modal.isOpen}
+          onClose={modal.close}
+          title={modal.selectedItem ? 'Editar Sello' : 'Nuevo Sello'}
           size="md"
           footer={
             <>
-              <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
+              <Button variant="ghost" onClick={modal.close}>
                 Cancelar
               </Button>
-              <Button onClick={handleSubmit} isLoading={isSubmitting}>
-                {selectedSeal ? 'Guardar Cambios' : 'Crear Sello'}
+              <Button type="submit" form="seal-form" isLoading={isPending}>
+                {modal.selectedItem ? 'Guardar Cambios' : 'Crear Sello'}
               </Button>
             </>
           }
         >
-          <div className="space-y-4">
+          <form id="seal-form" action={formAction} className="space-y-4">
             <Input
               label="Nombre"
+              name="name"
               placeholder="Ej: Vegano, Sin Gluten, Orgánico"
-              value={formData.name}
+              value={modal.formData.name}
               onChange={(e) =>
-                setFormData((prev) => ({ ...prev, name: e.target.value }))
+                modal.setFormData((prev) => ({ ...prev, name: e.target.value }))
               }
-              error={errors.name}
+              error={state.errors?.name}
               required
             />
 
             <Input
               label="Icono (Emoji)"
+              name="icon"
               placeholder="Ej: 🌱, 🥗, 🍃"
-              value={formData.icon}
+              value={modal.formData.icon}
               onChange={(e) =>
-                setFormData((prev) => ({ ...prev, icon: e.target.value }))
+                modal.setFormData((prev) => ({ ...prev, icon: e.target.value }))
               }
-              error={errors.icon}
+              error={state.errors?.icon}
             />
 
             <div>
@@ -308,19 +321,21 @@ export default function SealsPage() {
               <div className="flex items-center gap-3">
                 <input
                   type="color"
-                  value={formData.color}
+                  name="color"
+                  value={modal.formData.color}
                   onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, color: e.target.value }))
+                    modal.setFormData((prev) => ({ ...prev, color: e.target.value }))
                   }
                   className="h-10 w-20 rounded border border-zinc-700 bg-zinc-800 cursor-pointer"
                 />
                 <Input
+                  name="color_text"
                   placeholder="#10b981"
-                  value={formData.color}
+                  value={modal.formData.color}
                   onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, color: e.target.value }))
+                    modal.setFormData((prev) => ({ ...prev, color: e.target.value }))
                   }
-                  error={errors.color}
+                  error={state.errors?.color}
                 />
               </div>
               <p className="text-xs text-zinc-500 mt-1">
@@ -334,16 +349,16 @@ export default function SealsPage() {
                 Vista Previa
               </label>
               <div className="p-4 bg-zinc-800 rounded-lg border border-zinc-700">
-                {formData.name ? (
+                {modal.formData.name ? (
                   <span
                     className="inline-block text-xs px-2 py-1 rounded font-semibold"
                     style={{
-                      backgroundColor: `${formData.color}33`,
-                      color: formData.color,
+                      backgroundColor: `${modal.formData.color}33`,
+                      color: modal.formData.color,
                     }}
                   >
-                    {formData.icon && <span className="mr-1">{formData.icon}</span>}
-                    {formData.name}
+                    {modal.formData.icon && <span className="mr-1">{modal.formData.icon}</span>}
+                    {modal.formData.name}
                   </span>
                 ) : (
                   <span className="text-sm text-zinc-500">
@@ -355,21 +370,22 @@ export default function SealsPage() {
 
             <Toggle
               label="Activo"
-              checked={formData.is_active}
+              name="is_active"
+              checked={modal.formData.is_active}
               onChange={(e) =>
-                setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
+                modal.setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
               }
             />
-          </div>
+          </form>
         </Modal>
 
-        {/* Delete Confirmation */}
+        {/* SPRINT 13: Delete confirmation using useConfirmDialog hook */}
         <ConfirmDialog
-          isOpen={isDeleteOpen}
-          onClose={() => setIsDeleteOpen(false)}
+          isOpen={deleteDialog.isOpen}
+          onClose={deleteDialog.close}
           onConfirm={handleDelete}
           title="Eliminar Sello"
-          message={`¿Estas seguro de eliminar "${selectedSeal?.name}"?`}
+          message={`¿Estas seguro de eliminar "${deleteDialog.item?.name}"?`}
           confirmLabel="Eliminar"
         />
       </PageContainer>

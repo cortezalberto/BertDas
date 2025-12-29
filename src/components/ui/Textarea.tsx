@@ -1,13 +1,14 @@
-import { type TextareaHTMLAttributes, forwardRef, useId } from 'react'
+import { type TextareaHTMLAttributes, useId } from 'react'
 
 interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string
   error?: string
   helperText?: string
+  ref?: React.Ref<HTMLTextAreaElement>
 }
 
-export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ label, error, helperText, className = '', id, ...props }, ref) => {
+// REACT 19 IMPROVEMENT: Modernized component without forwardRef
+export function Textarea({ label, error, helperText, className = '', id, ref, ...props }: TextareaProps) {
     const generatedId = useId()
     const textareaId = id || generatedId
     const errorId = `${textareaId}-error`
@@ -55,7 +56,6 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
         )}
       </div>
     )
-  }
-)
+}
 
 Textarea.displayName = 'Textarea'

@@ -1,36 +1,87 @@
 import { Component, type ReactNode } from 'react'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
 import { Button } from './Button'
+import { logError } from '../../utils/logger'
 
 interface ErrorBoundaryProps {
   children: ReactNode
   fallback?: ReactNode
   onError?: (error: Error, errorInfo: React.ErrorInfo) => void
+  /** Name of the boundary for tracking purposes */
+  name?: string
 }
 
 interface ErrorBoundaryState {
   hasError: boolean
   error: Error | null
+  errorInfo: React.ErrorInfo | null
 }
 
+/**
+ * SPRINT 6: Enhanced Error Boundary with reporting capabilities
+ *
+ * Features:
+ * - Detailed error logging with component stack
+ * - Optional error tracking service integration
+ * - User-friendly error UI with retry mechanism
+ * - Development-only error details display
+ */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props)
-    this.state = { hasError: false, error: null }
+    this.state = { hasError: false, error: null, errorInfo: null }
   }
 
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+  static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
     return { hasError: true, error }
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
-    console.error('[ErrorBoundary] Error caught:', error)
-    console.error('[ErrorBoundary] Component stack:', errorInfo.componentStack)
+    // Log error with full context
+    logError(
+      `Error caught in boundary${this.props.name ? ` [${this.props.name}]` : ''}`,
+      'ErrorBoundary',
+      {
+        error: error.message,
+        stack: error.stack,
+        componentStack: errorInfo.componentStack,
+        timestamp: new Date().toISOString(),
+        userAgent: navigator.userAgent
+      }
+    )
+
+    // Store errorInfo for display
+    this.setState({ errorInfo })
+
+    // Call custom error handler
     this.props.onError?.(error, errorInfo)
+
+    // OPTIONAL: Send to error tracking service
+    // this.reportToErrorTracking(error, errorInfo)
   }
 
+  /**
+   * Optional: Send error to tracking service (Sentry, LogRocket, etc.)
+   * Uncomment and configure when ready to integrate
+   */
+  // private reportToErrorTracking(error: Error, errorInfo: React.ErrorInfo): void {
+  //   if (import.meta.env.PROD) {
+  //     // Example: Sentry integration
+  //     // Sentry.captureException(error, {
+  //     //   contexts: {
+  //     //     react: {
+  //     //       componentStack: errorInfo.componentStack,
+  //     //     },
+  //     //   },
+  //     //   tags: {
+  //     //     boundary: this.props.name || 'unknown',
+  //     //   },
+  //     // })
+  //   }
+  // }
+
   handleReset = (): void => {
-    this.setState({ hasError: false, error: null })
+    this.setState({ hasError: false, error: null, errorInfo: null })
   }
 
   render(): ReactNode {
@@ -51,16 +102,40 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <p className="text-zinc-400 max-w-md">
               Ha ocurrido un error inesperado. Por favor, intenta recargar la página.
             </p>
-            {this.state.error && (
-              <details className="text-left bg-zinc-900 rounded-lg p-4 max-w-md mx-auto">
-                <summary className="text-zinc-400 cursor-pointer text-sm">
-                  Detalles del error
+
+            {/* Development-only error details */}
+            {import.meta.env.DEV && this.state.error && (
+              <details className="text-left bg-zinc-900 rounded-lg p-4 max-w-2xl mx-auto">
+                <summary className="text-zinc-400 cursor-pointer text-sm font-medium hover:text-zinc-300">
+                  Detalles técnicos (desarrollo)
                 </summary>
-                <pre className="mt-2 text-xs text-red-400 overflow-auto">
-                  {this.state.error.message}
-                </pre>
+                <div className="mt-3 space-y-3">
+                  <div>
+                    <p className="text-xs font-semibold text-zinc-500 mb-1">Error:</p>
+                    <pre className="text-xs text-red-400 overflow-auto bg-zinc-950 p-2 rounded">
+                      {this.state.error.message}
+                    </pre>
+                  </div>
+                  {this.state.error.stack && (
+                    <div>
+                      <p className="text-xs font-semibold text-zinc-500 mb-1">Stack Trace:</p>
+                      <pre className="text-xs text-zinc-400 overflow-auto bg-zinc-950 p-2 rounded max-h-40">
+                        {this.state.error.stack}
+                      </pre>
+                    </div>
+                  )}
+                  {this.state.errorInfo?.componentStack && (
+                    <div>
+                      <p className="text-xs font-semibold text-zinc-500 mb-1">Component Stack:</p>
+                      <pre className="text-xs text-zinc-400 overflow-auto bg-zinc-950 p-2 rounded max-h-40">
+                        {this.state.errorInfo.componentStack}
+                      </pre>
+                    </div>
+                  )}
+                </div>
               </details>
             )}
+
             <div className="flex gap-3 justify-center pt-2">
               <Button
                 variant="secondary"

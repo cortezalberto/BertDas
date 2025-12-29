@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from 'react'
+import { useEffect, useId, useRef, memo } from 'react'
 import { X } from 'lucide-react'
 import { Button } from './Button'
 import { useFocusTrap } from '../../hooks'
@@ -19,7 +19,12 @@ const sizeStyles = {
   xl: 'max-w-4xl',
 }
 
-export function Modal({
+/**
+ * SPRINT 10: Memoized Modal component
+ * Prevents re-renders when parent updates but modal props unchanged
+ * Used across all CRUD pages for create/edit operations
+ */
+export const Modal = memo(function Modal({
   isOpen,
   onClose,
   title,
@@ -82,7 +87,11 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 modal-enter"
+      style={{
+        background: 'rgba(9, 9, 11, 0.85)',
+        backdropFilter: 'blur(4px)',
+      }}
       role="presentation"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose()
@@ -96,14 +105,18 @@ export function Modal({
         aria-describedby={contentId}
         className={`
           w-full ${sizeStyles[size]}
-          bg-zinc-900 border border-zinc-800 rounded-xl
-          shadow-xl
+          bg-[#2d2d32] border border-[#52525b] rounded-2xl
+          shadow-[0_20px_25px_-5px_rgba(0,0,0,0.5)]
           animate-in fade-in zoom-in-95 duration-200
         `}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
-          <h2 id={titleId} className="text-lg font-semibold text-white">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-[#3f3f46]">
+          <h2
+            id={titleId}
+            className="text-2xl font-semibold text-[#fafafa]"
+            style={{ fontFamily: 'var(--font-heading)' }}
+          >
             {title}
           </h2>
           <Button
@@ -127,11 +140,11 @@ export function Modal({
 
         {/* Footer */}
         {footer && (
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-zinc-800">
+          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#3f3f46] bg-[#27272a]">
             {footer}
           </div>
         )}
       </div>
     </div>
   )
-}
+})

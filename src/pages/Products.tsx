@@ -1,6 +1,7 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useActionState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Pencil, Trash2, Filter, Star, TrendingUp } from 'lucide-react'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { PageContainer } from '../components/layout'
 import {
   Card,
@@ -33,11 +34,13 @@ import {
   selectBranchById,
 } from '../stores/branchStore'
 import { toast } from '../stores/toastStore'
-import { validateProduct, type ValidationErrors, type BranchPriceErrors } from '../utils/validation'
+import { validateProduct } from '../utils/validation'
 import { handleError } from '../utils/logger'
 import { HOME_CATEGORY_NAME, formatPrice } from '../utils/constants'
 import { helpContent } from '../utils/helpContent'
 import type { Product, ProductFormData, TableColumn } from '../types'
+import type { FormState } from '../types/form'
+import type { BranchPriceErrors } from '../utils/validation'
 
 const initialFormData: ProductFormData = {
   name: '',
@@ -58,6 +61,9 @@ const initialFormData: ProductFormData = {
 }
 
 export function ProductsPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Productos')
+
   const navigate = useNavigate()
 
   const categories = useCategoryStore(selectCategories)
@@ -77,11 +83,69 @@ export function ProductsPage() {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [formData, setFormData] = useState<ProductFormData>(initialFormData)
-  const [errors, setErrors] = useState<ValidationErrors<ProductFormData>>({})
   const [branchPriceErrors, setBranchPriceErrors] = useState<BranchPriceErrors>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [filterCategory, setFilterCategory] = useState<string>('')
   const [filterSubcategory, setFilterSubcategory] = useState<string>('')
+
+  // REACT 19 IMPROVEMENT: Use useActionState for form handling
+  const submitAction = useCallback(
+    async (_prevState: FormState<ProductFormData>, formDataSubmit: FormData): Promise<FormState<ProductFormData>> => {
+      // Extract simple fields from FormData
+      const data: ProductFormData = {
+        name: formDataSubmit.get('name') as string,
+        description: formDataSubmit.get('description') as string,
+        price: parseFloat(formDataSubmit.get('price') as string) || 0,
+        image: formDataSubmit.get('image') as string,
+        category_id: formDataSubmit.get('category_id') as string,
+        subcategory_id: formDataSubmit.get('subcategory_id') as string,
+        badge: formDataSubmit.get('badge') as string,
+        seal: formDataSubmit.get('seal') as string,
+        featured: formDataSubmit.get('featured') === 'on',
+        popular: formDataSubmit.get('popular') === 'on',
+        is_active: formDataSubmit.get('is_active') === 'on',
+        stock: formDataSubmit.get('stock') ? parseInt(formDataSubmit.get('stock') as string, 10) : undefined,
+        // Complex fields from component state (not FormData)
+        allergen_ids: formData.allergen_ids,
+        branch_prices: formData.branch_prices,
+        use_branch_prices: formData.use_branch_prices,
+      }
+
+      const validation = validateProduct(data)
+      if (!validation.isValid) {
+        setBranchPriceErrors(validation.branchPriceErrors)
+        return { errors: validation.errors, isSuccess: false }
+      }
+
+      try {
+        if (selectedProduct) {
+          updateProduct(selectedProduct.id, data)
+          toast.success('Producto actualizado correctamente')
+        } else {
+          addProduct(data)
+          toast.success('Producto creado correctamente')
+        }
+        return { isSuccess: true }
+      } catch (error) {
+        const message = handleError(error, 'ProductsPage.submitAction')
+        toast.error(`Error al guardar el producto: ${message}`)
+        return { isSuccess: false, message: `Error: ${message}` }
+      }
+    },
+    [selectedProduct, updateProduct, addProduct, formData.allergen_ids, formData.branch_prices, formData.use_branch_prices]
+  )
+
+  const [state, formAction, isPending] = useActionState<FormState<ProductFormData>, FormData>(
+    submitAction,
+    { isSuccess: false }
+  )
+
+  // Close modal on success
+  if (state.isSuccess && isModalOpen) {
+    setIsModalOpen(false)
+    setSelectedProduct(null)
+    setFormData(initialFormData)
+    setBranchPriceErrors({})
+  }
 
   // Filtrar categorias por sucursal seleccionada
   const branchCategories = useMemo(() => {
@@ -184,7 +248,6 @@ export function ProductsPage() {
       category_id: categoryId,
       subcategory_id: filterSubcategory || subcats[0]?.id || '',
     })
-    setErrors({})
     setBranchPriceErrors({})
     setIsModalOpen(true)
   }, [selectedBranchId, selectableCategories, filterCategory, filterSubcategory, getByCategory])
@@ -203,11 +266,11 @@ export function ProductsPage() {
       featured: product.featured,
       popular: product.popular,
       badge: product.badge || '',
+      seal: product.seal || '',
       allergen_ids: product.allergen_ids || [],
       is_active: product.is_active ?? true,
       stock: product.stock,
     })
-    setErrors({})
     setBranchPriceErrors({})
     setIsModalOpen(true)
   }, [])
@@ -217,34 +280,6 @@ export function ProductsPage() {
     setIsDeleteOpen(true)
   }, [])
 
-  const handleSubmit = useCallback(() => {
-    const validation = validateProduct(formData)
-    if (!validation.isValid) {
-      setErrors(validation.errors)
-      setBranchPriceErrors(validation.branchPriceErrors)
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      if (selectedProduct) {
-        updateProduct(selectedProduct.id, formData)
-        toast.success('Producto actualizado correctamente')
-      } else {
-        addProduct(formData)
-        toast.success('Producto creado correctamente')
-      }
-      setIsModalOpen(false)
-      setFormData(initialFormData)
-      setErrors({})
-      setBranchPriceErrors({})
-    } catch (error) {
-      const message = handleError(error, 'ProductsPage.handleSubmit')
-      toast.error(`Error al guardar el producto: ${message}`)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }, [formData, selectedProduct, updateProduct, addProduct])
 
   const handleDelete = useCallback(() => {
     if (!selectedProduct) return
@@ -570,13 +605,13 @@ export function ProductsPage() {
             <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={handleSubmit} isLoading={isSubmitting}>
+            <Button type="submit" form="product-form" isLoading={isPending}>
               {selectedProduct ? 'Guardar' : 'Crear'}
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
+        <form id="product-form" action={formAction} className="space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <HelpButton
               title="Formulario de Producto"
@@ -627,47 +662,52 @@ export function ProductsPage() {
           <div className="grid grid-cols-2 gap-4">
             <Select
               label="Categoria"
+              name="category_id"
               options={categoryOptions}
               value={formData.category_id}
               onChange={(e) => handleCategoryChange(e.target.value)}
               placeholder="Selecciona una categoria"
-              error={errors.category_id}
+              error={state.errors?.category_id}
             />
 
             <Select
               label="Subcategoria"
+              name="subcategory_id"
               options={formSubcategoryOptions}
               value={formData.subcategory_id}
               onChange={(e) =>
                 setFormData((prev) => ({ ...prev, subcategory_id: e.target.value }))
               }
               placeholder="Selecciona una subcategoria"
-              error={errors.subcategory_id}
+              error={state.errors?.subcategory_id}
               disabled={!formData.category_id}
             />
           </div>
 
           <Input
             label="Nombre"
+            name="name"
             value={formData.name}
             onChange={(e) =>
               setFormData((prev) => ({ ...prev, name: e.target.value }))
             }
             placeholder="Ej: Hamburguesa Clasica"
-            error={errors.name}
+            error={state.errors?.name}
           />
 
           <Textarea
             label="Descripcion"
+            name="description"
             value={formData.description}
             onChange={(e) =>
               setFormData((prev) => ({ ...prev, description: e.target.value }))
             }
             placeholder="Descripcion del producto..."
-            error={errors.description}
+            error={state.errors?.description}
             rows={2}
           />
 
+          <input type="hidden" name="price" value={formData.price} />
           <BranchPriceInput
             label="Precio"
             defaultPrice={formData.price}
@@ -682,19 +722,11 @@ export function ProductsPage() {
             onUseBranchPricesChange={(use_branch_prices) =>
               setFormData((prev) => ({ ...prev, use_branch_prices }))
             }
-            error={errors.price || errors.branch_prices}
+            error={state.errors?.price || state.errors?.branch_prices}
             priceErrors={branchPriceErrors}
           />
 
-          <Input
-            label="Badge (opcional)"
-            value={formData.badge || ''}
-            onChange={(e) =>
-              setFormData((prev) => ({ ...prev, badge: e.target.value }))
-            }
-            placeholder="Ej: VEGANO, NUEVO, PROMO"
-          />
-
+          <input type="hidden" name="image" value={formData.image} />
           <ImageUpload
             label="Imagen"
             value={formData.image}
@@ -713,12 +745,13 @@ export function ProductsPage() {
 
           <Select
             label="Insignia"
+            name="badge"
             placeholder="Sin insignia"
             value={formData.badge}
             onChange={(e) =>
               setFormData((prev) => ({ ...prev, badge: e.target.value }))
             }
-            error={errors.badge}
+            error={state.errors?.badge}
             options={badges
               .filter((b) => b.is_active)
               .map((badge) => ({
@@ -729,12 +762,13 @@ export function ProductsPage() {
 
           <Select
             label="Sello"
+            name="seal"
             placeholder="Sin sello"
             value={formData.seal}
             onChange={(e) =>
               setFormData((prev) => ({ ...prev, seal: e.target.value }))
             }
-            error={errors.seal}
+            error={state.errors?.seal}
             options={seals
               .filter((s) => s.is_active)
               .map((seal) => ({
@@ -743,9 +777,26 @@ export function ProductsPage() {
               }))}
           />
 
+          {formData.stock !== undefined && (
+            <Input
+              label="Stock (opcional)"
+              name="stock"
+              type="number"
+              value={formData.stock || ''}
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  stock: e.target.value ? parseInt(e.target.value, 10) : undefined,
+                }))
+              }
+              min={0}
+            />
+          )}
+
           <div className="flex gap-6">
             <Toggle
               label="Destacado"
+              name="featured"
               checked={formData.featured}
               onChange={(e) =>
                 setFormData((prev) => ({ ...prev, featured: e.target.checked }))
@@ -754,6 +805,7 @@ export function ProductsPage() {
 
             <Toggle
               label="Popular"
+              name="popular"
               checked={formData.popular}
               onChange={(e) =>
                 setFormData((prev) => ({ ...prev, popular: e.target.checked }))
@@ -762,13 +814,14 @@ export function ProductsPage() {
 
             <Toggle
               label="Activo"
+              name="is_active"
               checked={formData.is_active}
               onChange={(e) =>
                 setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
               }
             />
           </div>
-        </div>
+        </form>
       </Modal>
 
       {/* Delete Confirmation */}

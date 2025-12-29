@@ -15,6 +15,8 @@ export const STORAGE_KEYS = {
   PROMOTION_TYPES: 'dashboard-promotion-types',
   TABLES: 'dashboard-tables',
   ORDER_HISTORY: 'dashboard-order-history',
+  STAFF: 'dashboard-staff',
+  ROLES: 'dashboard-roles',
 } as const
 
 // Store versions for migration support
@@ -32,6 +34,8 @@ export const STORE_VERSIONS = {
   PROMOTION_TYPES: 2, // v2: Non-destructive merge
   TABLES: 6,          // v6: pedido_cumplido keeps order_time from solicito_pedido
   ORDER_HISTORY: 1,   // v1: Initial version
+  STAFF: 2,           // v2: Initialize sample staff if empty
+  ROLES: 1,           // v1: Initial version with predefined roles
 } as const
 
 // Table status labels for UI display

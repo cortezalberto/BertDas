@@ -1,2 +1,6 @@
 export { useFocusTrap } from './useFocusTrap'
 export { usePagination } from './usePagination'
+export { useFormModal } from './useFormModal'
+export { useConfirmDialog } from './useConfirmDialog'
+export { useOptimisticMutation, useOptimisticDelete, optimisticReducer } from './useOptimisticMutation'
+export type { OptimisticAction, UseOptimisticMutationOptions, UseOptimisticMutationReturn } from './useOptimisticMutation'

@@ -143,7 +143,9 @@ export const useCategoryStore = create<CategoryState>()(
       reorderCategories: (categories) => {
         // Validate that categories array is valid before setting
         if (!Array.isArray(categories)) {
-          console.warn('reorderCategories: Invalid categories array')
+          if (import.meta.env.DEV) {
+            console.warn('[categoryStore] reorderCategories: Invalid categories array')
+          }
           return
         }
         set({ categories })

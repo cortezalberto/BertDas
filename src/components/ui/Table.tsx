@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { TableColumn } from '../../types'
 
 interface TableProps<T> {
@@ -9,7 +10,12 @@ interface TableProps<T> {
   ariaLabel?: string
 }
 
-export function Table<T extends { id: string }>({
+/**
+ * SPRINT 10: Memoized Table component
+ * Prevents re-renders when parent updates but table props unchanged
+ * Used extensively across all CRUD pages
+ */
+function TableComponent<T extends { id: string }>({
   data,
   columns,
   onRowClick,
@@ -28,7 +34,7 @@ export function Table<T extends { id: string }>({
 
   if (data.length === 0) {
     return (
-      <div className="flex items-center justify-center py-12 text-zinc-500" role="status">
+      <div className="flex items-center justify-center py-12 text-[#71717a]" role="status">
         {emptyMessage}
       </div>
     )
@@ -38,15 +44,17 @@ export function Table<T extends { id: string }>({
     <div className="overflow-x-auto">
       <table className="w-full" aria-label={ariaLabel || 'Tabla de datos'}>
         <thead>
-          <tr className="border-b border-zinc-800">
+          <tr className="border-b border-[#3f3f46] bg-[#3f3f46]">
             {columns.map((column) => (
               <th
                 key={String(column.key)}
                 scope="col"
                 className={`
-                  px-4 py-3 text-left text-sm font-medium text-zinc-400
+                  px-4 py-3 text-left text-xs font-bold text-[#e4e4e7]
+                  uppercase tracking-wider
                   ${column.width || ''}
                 `}
+                style={{ fontFamily: 'var(--font-body)' }}
               >
                 {column.label}
               </th>
@@ -68,15 +76,16 @@ export function Table<T extends { id: string }>({
               role={onRowClick ? 'button' : undefined}
               aria-label={onRowClick ? `Ver detalles del elemento` : undefined}
               className={`
-                border-b border-zinc-800/50
+                border-b border-[#3f3f46]/50
                 transition-colors duration-150
-                ${onRowClick ? 'cursor-pointer hover:bg-zinc-800/50 focus:bg-zinc-800/50 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-inset' : ''}
+                ${onRowClick ? 'cursor-pointer hover:bg-[#f97316]/5 focus:bg-[#f97316]/5 focus:outline-none focus:ring-2 focus:ring-[#f97316] focus:ring-inset' : ''}
               `}
             >
               {columns.map((column) => (
                 <td
                   key={`${item.id}-${String(column.key)}`}
-                  className="px-4 py-3 text-sm text-zinc-300"
+                  className="px-4 py-3 text-sm text-[#fafafa]"
+                  style={{ fontFamily: 'var(--font-body)' }}
                 >
                   {column.render
                     ? column.render(item)
@@ -90,3 +99,6 @@ export function Table<T extends { id: string }>({
     </div>
   )
 }
+
+// Export memoized version with generic support
+export const Table = memo(TableComponent) as typeof TableComponent

@@ -1,5 +1,7 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useActionState } from 'react'
 import { Plus, Pencil, Trash2, Award } from 'lucide-react'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import { useFormModal, useConfirmDialog, usePagination } from '../hooks'
 import { PageContainer } from '../components/layout'
 import {
   Card,
@@ -12,13 +14,13 @@ import {
   Badge as UIBadge,
   Pagination,
 } from '../components/ui'
-import { usePagination } from '../hooks/usePagination'
 import { useBadgeStore, selectBadges } from '../stores/badgeStore'
 import { useProductStore, selectProducts } from '../stores/productStore'
 import { toast } from '../stores/toastStore'
-import { validateBadge, type ValidationErrors } from '../utils/validation'
+import { validateBadge } from '../utils/validation'
 import { handleError } from '../utils/logger'
 import type { ProductBadge, BadgeFormData, TableColumn } from '../types'
+import type { FormState } from '../types/form'
 
 const initialFormData: BadgeFormData = {
   name: '',
@@ -27,6 +29,9 @@ const initialFormData: BadgeFormData = {
 }
 
 export default function BadgesPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Distintivos')
+
   const badges = useBadgeStore(selectBadges)
   const addBadge = useBadgeStore((s) => s.addBadge)
   const updateBadge = useBadgeStore((s) => s.updateBadge)
@@ -35,12 +40,9 @@ export default function BadgesPage() {
   const products = useProductStore(selectProducts)
   const removeBadgeFromProducts = useProductStore((s) => s.removeBadgeFromProducts)
 
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [isDeleteOpen, setIsDeleteOpen] = useState(false)
-  const [selectedBadge, setSelectedBadge] = useState<ProductBadge | null>(null)
-  const [formData, setFormData] = useState<BadgeFormData>(initialFormData)
-  const [errors, setErrors] = useState<ValidationErrors<BadgeFormData>>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  // SPRINT 13: Use custom hooks for modal and dialog state
+  const modal = useFormModal<BadgeFormData>(initialFormData)
+  const deleteDialog = useConfirmDialog<ProductBadge>()
 
   const sortedBadges = useMemo(
     () => [...badges].sort((a, b) => a.name.localeCompare(b.name)),
@@ -63,67 +65,75 @@ export default function BadgesPage() {
     [products]
   )
 
+  // REACT 19 IMPROVEMENT: Use useActionState for form handling
+  const submitAction = useCallback(
+    async (_prevState: FormState<BadgeFormData>, formData: FormData): Promise<FormState<BadgeFormData>> => {
+      const data: BadgeFormData = {
+        name: formData.get('name') as string,
+        color: formData.get('color') as string,
+        is_active: formData.get('is_active') === 'on',
+      }
+
+      const validation = validateBadge(data)
+      if (!validation.isValid) {
+        return { errors: validation.errors, isSuccess: false }
+      }
+
+      try {
+        if (modal.selectedItem) {
+          updateBadge(modal.selectedItem.id, data)
+          toast.success('Insignia actualizada correctamente')
+        } else {
+          addBadge(data)
+          toast.success('Insignia creada correctamente')
+        }
+        return { isSuccess: true, message: 'Guardado correctamente' }
+      } catch (error) {
+        const message = handleError(error, 'BadgesPage.submitAction')
+        toast.error(`Error al guardar la insignia: ${message}`)
+        return { isSuccess: false, message: `Error: ${message}` }
+      }
+    },
+    [modal.selectedItem, updateBadge, addBadge]
+  )
+
+  const [state, formAction, isPending] = useActionState<FormState<BadgeFormData>, FormData>(
+    submitAction,
+    { isSuccess: false }
+  )
+
+  // SPRINT 13: Close modal on success using modal.close()
+  if (state.isSuccess && modal.isOpen) {
+    modal.close()
+  }
+
+  // SPRINT 13: Simplified modal handlers using custom hook
   const openCreateModal = useCallback(() => {
-    setSelectedBadge(null)
-    setFormData(initialFormData)
-    setErrors({})
-    setIsModalOpen(true)
-  }, [])
+    modal.openCreate(initialFormData)
+  }, [modal])
 
   const openEditModal = useCallback((badge: ProductBadge) => {
-    setSelectedBadge(badge)
-    setFormData({
+    modal.openEdit(badge, {
       name: badge.name,
       color: badge.color || '#f97316',
       is_active: badge.is_active ?? true,
     })
-    setErrors({})
-    setIsModalOpen(true)
-  }, [])
+  }, [modal])
 
-  const openDeleteDialog = useCallback((badge: ProductBadge) => {
-    setSelectedBadge(badge)
-    setIsDeleteOpen(true)
-  }, [])
-
-  const handleSubmit = useCallback(() => {
-    const validation = validateBadge(formData)
-    if (!validation.isValid) {
-      setErrors(validation.errors)
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      if (selectedBadge) {
-        updateBadge(selectedBadge.id, formData)
-        toast.success('Insignia actualizada correctamente')
-      } else {
-        addBadge(formData)
-        toast.success('Insignia creada correctamente')
-      }
-      setIsModalOpen(false)
-    } catch (error) {
-      const message = handleError(error, 'BadgesPage.handleSubmit')
-      toast.error(`Error al guardar la insignia: ${message}`)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }, [formData, selectedBadge, updateBadge, addBadge])
-
+  // SPRINT 13: Simplified delete handler
   const handleDelete = useCallback(() => {
-    if (!selectedBadge) return
+    if (!deleteDialog.item) return
 
     try {
-      const productCount = getProductCount(selectedBadge.name)
+      const productCount = getProductCount(deleteDialog.item.name)
 
       // Remove badge from products if needed
       if (removeBadgeFromProducts && productCount > 0) {
-        removeBadgeFromProducts(selectedBadge.name)
+        removeBadgeFromProducts(deleteDialog.item.name)
       }
 
       // Delete badge
-      deleteBadge(selectedBadge.id)
+      deleteBadge(deleteDialog.item.id)
 
       if (productCount > 0) {
         toast.warning(
@@ -132,12 +142,12 @@ export default function BadgesPage() {
       }
 
       toast.success('Insignia eliminada correctamente')
-      setIsDeleteOpen(false)
+      deleteDialog.close()
     } catch (error) {
       const message = handleError(error, 'BadgesPage.handleDelete')
       toast.error(`Error al eliminar la insignia: ${message}`)
     }
-  }, [selectedBadge, getProductCount, deleteBadge, removeBadgeFromProducts])
+  }, [deleteDialog, getProductCount, deleteBadge, removeBadgeFromProducts])
 
   const columns: TableColumn<ProductBadge>[] = useMemo(
     () => [
@@ -204,7 +214,7 @@ export default function BadgesPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => openDeleteDialog(badge)}
+                onClick={() => deleteDialog.open(badge)}
                 aria-label={`Eliminar ${badge.name}`}
                 disabled={productCount > 0}
                 title={
@@ -220,7 +230,7 @@ export default function BadgesPage() {
         },
       },
     ],
-    [getProductCount, openEditModal, openDeleteDialog]
+    [getProductCount, openEditModal, deleteDialog.open]
   )
 
   return (
@@ -252,32 +262,33 @@ export default function BadgesPage() {
           />
         </Card>
 
-        {/* Create/Edit Modal */}
+        {/* SPRINT 13: Modal using useFormModal hook */}
         <Modal
-          isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
-          title={selectedBadge ? 'Editar Insignia' : 'Nueva Insignia'}
+          isOpen={modal.isOpen}
+          onClose={modal.close}
+          title={modal.selectedItem ? 'Editar Insignia' : 'Nueva Insignia'}
           size="md"
           footer={
             <>
-              <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
+              <Button variant="ghost" onClick={modal.close}>
                 Cancelar
               </Button>
-              <Button onClick={handleSubmit} isLoading={isSubmitting}>
-                {selectedBadge ? 'Guardar Cambios' : 'Crear Insignia'}
+              <Button type="submit" form="badge-form" isLoading={isPending}>
+                {modal.selectedItem ? 'Guardar Cambios' : 'Crear Insignia'}
               </Button>
             </>
           }
         >
-          <div className="space-y-4">
+          <form id="badge-form" action={formAction} className="space-y-4">
             <Input
               label="Nombre"
+              name="name"
               placeholder="Ej: Nuevo, Popular, Chef's Choice"
-              value={formData.name}
+              value={modal.formData.name}
               onChange={(e) =>
-                setFormData((prev) => ({ ...prev, name: e.target.value }))
+                modal.setFormData((prev) => ({ ...prev, name: e.target.value }))
               }
-              error={errors.name}
+              error={state.errors?.name}
               required
             />
 
@@ -288,19 +299,21 @@ export default function BadgesPage() {
               <div className="flex items-center gap-3">
                 <input
                   type="color"
-                  value={formData.color}
+                  name="color"
+                  value={modal.formData.color}
                   onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, color: e.target.value }))
+                    modal.setFormData((prev) => ({ ...prev, color: e.target.value }))
                   }
                   className="h-10 w-20 rounded border border-zinc-700 bg-zinc-800 cursor-pointer"
                 />
                 <Input
+                  name="color_text"
                   placeholder="#f97316"
-                  value={formData.color}
+                  value={modal.formData.color}
                   onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, color: e.target.value }))
+                    modal.setFormData((prev) => ({ ...prev, color: e.target.value }))
                   }
-                  error={errors.color}
+                  error={state.errors?.color}
                 />
               </div>
               <p className="text-xs text-zinc-500 mt-1">
@@ -314,15 +327,15 @@ export default function BadgesPage() {
                 Vista Previa
               </label>
               <div className="p-4 bg-zinc-800 rounded-lg border border-zinc-700">
-                {formData.name ? (
+                {modal.formData.name ? (
                   <span
                     className="inline-block text-xs px-2 py-1 rounded font-semibold"
                     style={{
-                      backgroundColor: `${formData.color}33`,
-                      color: formData.color,
+                      backgroundColor: `${modal.formData.color}33`,
+                      color: modal.formData.color,
                     }}
                   >
-                    {formData.name}
+                    {modal.formData.name}
                   </span>
                 ) : (
                   <span className="text-sm text-zinc-500">
@@ -334,21 +347,22 @@ export default function BadgesPage() {
 
             <Toggle
               label="Activo"
-              checked={formData.is_active}
+              name="is_active"
+              checked={modal.formData.is_active}
               onChange={(e) =>
-                setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
+                modal.setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
               }
             />
-          </div>
+          </form>
         </Modal>
 
-        {/* Delete Confirmation */}
+        {/* SPRINT 13: Delete confirmation using useConfirmDialog hook */}
         <ConfirmDialog
-          isOpen={isDeleteOpen}
-          onClose={() => setIsDeleteOpen(false)}
+          isOpen={deleteDialog.isOpen}
+          onClose={deleteDialog.close}
           onConfirm={handleDelete}
           title="Eliminar Insignia"
-          message={`¿Estas seguro de eliminar "${selectedBadge?.name}"?`}
+          message={`¿Estas seguro de eliminar "${deleteDialog.item?.name}"?`}
           confirmLabel="Eliminar"
         />
       </PageContainer>

@@ -1,5 +1,6 @@
-import { useState, useMemo, useCallback, useId, useEffect } from 'react'
+import { useState, useMemo, useCallback, useId, useEffect, useActionState } from 'react'
 import { Plus, Trash2, Users, Archive, Clock } from 'lucide-react'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { PageContainer } from '../components/layout'
 import {
   Card,
@@ -16,11 +17,12 @@ import { useTableStore, selectTables } from '../stores/tableStore'
 import { useBranchStore, selectBranches } from '../stores/branchStore'
 import { useOrderHistoryStore } from '../stores/orderHistoryStore'
 import { toast } from '../stores/toastStore'
-import { validateTable, type ValidationErrors } from '../utils/validation'
+import { validateTable } from '../utils/validation'
 import { handleError } from '../utils/logger'
 import { helpContent } from '../utils/helpContent'
 import { TABLE_STATUS_LABELS, TABLE_SECTORS, TABLE_DEFAULT_TIME } from '../utils/constants'
 import type { RestaurantTable, RestaurantTableFormData, TableStatus } from '../types'
+import type { FormState } from '../types/form'
 
 const initialFormData: RestaurantTableFormData = {
   branch_id: '',
@@ -109,12 +111,19 @@ interface TableCardProps {
 function TableCard({ table, onEdit, onDelete, onArchive }: TableCardProps) {
   const styles = getStatusStyles(table.status, table.is_active !== false)
 
+  // Agregar animación pulse para estados urgentes
+  const pulseClass = table.status === 'solicito_pedido'
+    ? 'animate-pulse-warning'
+    : table.status === 'cuenta_solicitada'
+    ? 'animate-pulse-urgent'
+    : ''
+
   return (
     <div
       className={`
         relative p-2 rounded-md border-2 transition-all duration-200
         hover:scale-[1.03] hover:shadow-md cursor-pointer min-w-[100px]
-        ${styles.bg} ${styles.border}
+        ${styles.bg} ${styles.border} ${pulseClass}
       `}
       onClick={() => onEdit(table)}
       role="button"
@@ -210,6 +219,9 @@ function StatusLegend() {
 }
 
 export function TablesPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Mesas')
+
   const tables = useTableStore(selectTables)
   const addTable = useTableStore((s) => s.addTable)
   const updateTable = useTableStore((s) => s.updateTable)
@@ -226,10 +238,61 @@ export function TablesPage() {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
   const [selectedTable, setSelectedTable] = useState<RestaurantTable | null>(null)
   const [formData, setFormData] = useState<RestaurantTableFormData>(initialFormData)
-  const [errors, setErrors] = useState<ValidationErrors<RestaurantTableFormData>>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [filterBranchId, setFilterBranchId] = useState<string>(() => branches[0]?.id || '')
   const [filterStatus, setFilterStatus] = useState<string>('')
+
+  // REACT 19 IMPROVEMENT: Use useActionState for form handling
+  const submitAction = useCallback(
+    async (_prevState: FormState<RestaurantTableFormData>, formDataSubmit: FormData): Promise<FormState<RestaurantTableFormData>> => {
+      // Extract simple fields from FormData
+      const data: RestaurantTableFormData = {
+        branch_id: formDataSubmit.get('branch_id') as string,
+        number: parseInt(formDataSubmit.get('number') as string, 10) || 1,
+        capacity: parseInt(formDataSubmit.get('capacity') as string, 10) || 1,
+        sector: formDataSubmit.get('sector') as string,
+        status: formDataSubmit.get('status') as TableStatus,
+        order_time: formDataSubmit.get('order_time') as string,
+        close_time: formDataSubmit.get('close_time') as string,
+        is_active: formDataSubmit.get('is_active') === 'on',
+      }
+
+      const validation = validateTable(data, {
+        existingTables: tables,
+        editingTableId: selectedTable?.id,
+      })
+      if (!validation.isValid) {
+        return { errors: validation.errors, isSuccess: false }
+      }
+
+      try {
+        if (selectedTable) {
+          updateTable(selectedTable.id, data)
+          toast.success('Mesa actualizada correctamente')
+        } else {
+          addTable(data)
+          toast.success('Mesa creada correctamente')
+        }
+        return { isSuccess: true }
+      } catch (error) {
+        const message = handleError(error, 'TablesPage.submitAction')
+        toast.error(`Error al guardar la mesa: ${message}`)
+        return { isSuccess: false, message: `Error: ${message}` }
+      }
+    },
+    [selectedTable, updateTable, addTable, tables]
+  )
+
+  const [state, formAction, isPending] = useActionState<FormState<RestaurantTableFormData>, FormData>(
+    submitAction,
+    { isSuccess: false }
+  )
+
+  // Close modal on success
+  if (state.isSuccess && isModalOpen) {
+    setIsModalOpen(false)
+    setSelectedTable(null)
+    setFormData(initialFormData)
+  }
 
   // Sync filterBranchId when branches load or change
   useEffect(() => {
@@ -284,7 +347,6 @@ export function TablesPage() {
       branch_id: defaultBranchId,
       number: nextNumber,
     })
-    setErrors({})
     setIsModalOpen(true)
   }, [branches, getNextTableNumber, filterBranchId])
 
@@ -300,7 +362,6 @@ export function TablesPage() {
       close_time: table.close_time ?? TABLE_DEFAULT_TIME,
       is_active: table.is_active ?? true,
     })
-    setErrors({})
     setIsModalOpen(true)
   }, [])
 
@@ -374,33 +435,6 @@ export function TablesPage() {
     })
   }, [getCurrentTime])
 
-  const handleSubmit = useCallback(() => {
-    const validation = validateTable(formData, {
-      existingTables: tables,
-      editingTableId: selectedTable?.id,
-    })
-    if (!validation.isValid) {
-      setErrors(validation.errors)
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      if (selectedTable) {
-        updateTable(selectedTable.id, formData)
-        toast.success('Mesa actualizada correctamente')
-      } else {
-        addTable(formData)
-        toast.success('Mesa creada correctamente')
-      }
-      setIsModalOpen(false)
-    } catch (error) {
-      const message = handleError(error, 'TablesPage.handleSubmit')
-      toast.error(`Error al guardar la mesa: ${message}`)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }, [formData, selectedTable, updateTable, addTable, tables])
 
   const handleDelete = useCallback(() => {
     if (!selectedTable) return
@@ -587,13 +621,13 @@ export function TablesPage() {
             <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={handleSubmit} isLoading={isSubmitting}>
+            <Button type="submit" form="table-form" isLoading={isPending}>
               {selectedTable ? 'Guardar' : 'Crear'}
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
+        <form id="table-form" action={formAction} className="space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <HelpButton
               title="Formulario de Mesa"
@@ -644,16 +678,18 @@ export function TablesPage() {
           {/* Branch Select */}
           <Select
             label="Sucursal"
+            name="branch_id"
             options={branchOptions}
             placeholder="Seleccionar sucursal"
             value={formData.branch_id}
             onChange={(e) => handleBranchChange(e.target.value)}
-            error={errors.branch_id}
+            error={state.errors?.branch_id}
           />
 
           {/* Table Number */}
           <Input
             label="Numero de mesa"
+            name="number"
             type="number"
             min={1}
             value={formData.number}
@@ -663,12 +699,13 @@ export function TablesPage() {
                 number: parseInt(e.target.value, 10) || 1,
               }))
             }
-            error={errors.number}
+            error={state.errors?.number}
           />
 
           {/* Capacity */}
           <Input
             label="Capacidad (comensales)"
+            name="capacity"
             type="number"
             min={1}
             max={50}
@@ -679,50 +716,54 @@ export function TablesPage() {
                 capacity: parseInt(e.target.value, 10) || 1,
               }))
             }
-            error={errors.capacity}
+            error={state.errors?.capacity}
           />
 
           {/* Sector */}
           <Select
             label="Sector"
+            name="sector"
             options={sectorOptions}
             value={formData.sector}
             onChange={(e) =>
               setFormData((prev) => ({ ...prev, sector: e.target.value }))
             }
-            error={errors.sector}
+            error={state.errors?.sector}
           />
 
           {/* Status */}
           <Select
             label="Estado"
+            name="status"
             options={statusOptions}
             value={formData.status}
             onChange={(e) => handleStatusChange(e.target.value as TableStatus)}
-            error={errors.status}
+            error={state.errors?.status}
           />
 
           {/* Time fields */}
           <div className="grid grid-cols-2 gap-4">
             <Input
               label="Hora Pedido"
+              name="order_time"
               type="time"
               value={formData.order_time}
               onChange={(e) =>
                 setFormData((prev) => ({ ...prev, order_time: e.target.value }))
               }
               disabled={formData.status === 'libre' || formData.status === 'ocupada'}
-              error={errors.order_time}
+              error={state.errors?.order_time}
             />
             <Input
               label="Hora Cierre"
+              name="close_time"
               type="time"
               value={formData.close_time}
               onChange={(e) =>
                 setFormData((prev) => ({ ...prev, close_time: e.target.value }))
               }
               disabled={formData.status !== 'cuenta_solicitada'}
-              error={errors.close_time}
+              error={state.errors?.close_time}
             />
           </div>
           <p className="text-xs text-zinc-500 -mt-2">
@@ -736,12 +777,13 @@ export function TablesPage() {
           {/* Active Toggle */}
           <Toggle
             label="Mesa activa"
+            name="is_active"
             checked={formData.is_active}
             onChange={(e) =>
               setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
             }
           />
-        </div>
+        </form>
       </Modal>
 
       {/* Delete Confirmation */}

@@ -1,5 +1,6 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useActionState } from 'react'
 import { Plus, Pencil, Trash2 } from 'lucide-react'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { PageContainer } from '../components/layout'
 import {
   Card,
@@ -27,11 +28,12 @@ import {
   selectPromotionTypes,
 } from '../stores/promotionTypeStore'
 import { toast } from '../stores/toastStore'
-import { validatePromotion, type ValidationErrors } from '../utils/validation'
+import { validatePromotion } from '../utils/validation'
 import { handleError } from '../utils/logger'
 import { formatPrice } from '../utils/constants'
 import { helpContent } from '../utils/helpContent'
 import type { Promotion, PromotionFormData, TableColumn } from '../types'
+import type { FormState } from '../types/form'
 
 const initialFormData: PromotionFormData = {
   name: '',
@@ -49,6 +51,9 @@ const initialFormData: PromotionFormData = {
 }
 
 export function PromotionsPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Promociones')
+
   const promotions = usePromotionStore(selectPromotions)
   const addPromotion = usePromotionStore((s) => s.addPromotion)
   const updatePromotion = usePromotionStore((s) => s.updatePromotion)
@@ -61,8 +66,61 @@ export function PromotionsPage() {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
   const [selectedPromotion, setSelectedPromotion] = useState<Promotion | null>(null)
   const [formData, setFormData] = useState<PromotionFormData>(initialFormData)
-  const [errors, setErrors] = useState<ValidationErrors<PromotionFormData>>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // REACT 19 IMPROVEMENT: Use useActionState for form handling
+  const submitAction = useCallback(
+    async (_prevState: FormState<PromotionFormData>, formDataSubmit: FormData): Promise<FormState<PromotionFormData>> => {
+      // Extract simple fields from FormData
+      const data: PromotionFormData = {
+        name: formDataSubmit.get('name') as string,
+        description: formDataSubmit.get('description') as string,
+        price: parseFloat(formDataSubmit.get('price') as string) || 0,
+        image: formDataSubmit.get('image') as string,
+        start_date: formDataSubmit.get('start_date') as string,
+        end_date: formDataSubmit.get('end_date') as string,
+        start_time: formDataSubmit.get('start_time') as string,
+        end_time: formDataSubmit.get('end_time') as string,
+        promotion_type_id: formDataSubmit.get('promotion_type_id') as string,
+        is_active: formDataSubmit.get('is_active') === 'on',
+        // Complex fields from component state (not FormData)
+        branch_ids: formData.branch_ids,
+        items: formData.items,
+      }
+
+      const validation = validatePromotion(data, { isEditing: !!selectedPromotion })
+      if (!validation.isValid) {
+        return { errors: validation.errors, isSuccess: false }
+      }
+
+      try {
+        if (selectedPromotion) {
+          updatePromotion(selectedPromotion.id, data)
+          toast.success('Promocion actualizada correctamente')
+        } else {
+          addPromotion(data)
+          toast.success('Promocion creada correctamente')
+        }
+        return { isSuccess: true }
+      } catch (error) {
+        const message = handleError(error, 'PromotionsPage.submitAction')
+        toast.error(`Error al guardar la promocion: ${message}`)
+        return { isSuccess: false, message: `Error: ${message}` }
+      }
+    },
+    [selectedPromotion, updatePromotion, addPromotion, formData.branch_ids, formData.items]
+  )
+
+  const [state, formAction, isPending] = useActionState<FormState<PromotionFormData>, FormData>(
+    submitAction,
+    { isSuccess: false }
+  )
+
+  // Close modal on success
+  if (state.isSuccess && isModalOpen) {
+    setIsModalOpen(false)
+    setSelectedPromotion(null)
+    setFormData(initialFormData)
+  }
 
   const sortedPromotions = useMemo(
     () => [...promotions].sort((a, b) => a.name.localeCompare(b.name)),
@@ -115,7 +173,6 @@ export function PromotionsPage() {
       ...initialFormData,
       branch_ids: activeBranchIds,
     })
-    setErrors({})
     setIsModalOpen(true)
   }, [activeBranchIds])
 
@@ -135,7 +192,6 @@ export function PromotionsPage() {
       items: promotion.items,
       is_active: promotion.is_active ?? true,
     })
-    setErrors({})
     setIsModalOpen(true)
   }, [])
 
@@ -144,30 +200,6 @@ export function PromotionsPage() {
     setIsDeleteOpen(true)
   }, [])
 
-  const handleSubmit = useCallback(() => {
-    const validation = validatePromotion(formData, { isEditing: !!selectedPromotion })
-    if (!validation.isValid) {
-      setErrors(validation.errors)
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      if (selectedPromotion) {
-        updatePromotion(selectedPromotion.id, formData)
-        toast.success('Promocion actualizada correctamente')
-      } else {
-        addPromotion(formData)
-        toast.success('Promocion creada correctamente')
-      }
-      setIsModalOpen(false)
-    } catch (error) {
-      const message = handleError(error, 'PromotionsPage.handleSubmit')
-      toast.error(`Error al guardar la promocion: ${message}`)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }, [formData, selectedPromotion, updatePromotion, addPromotion])
 
   const handleDelete = useCallback(() => {
     if (!selectedPromotion) return
@@ -391,13 +423,13 @@ export function PromotionsPage() {
             <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={handleSubmit} isLoading={isSubmitting}>
+            <Button type="submit" form="promotion-form" isLoading={isPending}>
               {selectedPromotion ? 'Guardar' : 'Crear'}
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
+        <form id="promotion-form" action={formAction} className="space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <HelpButton
               title="Formulario de Promocion"
@@ -450,16 +482,18 @@ export function PromotionsPage() {
 
           <Input
             label="Nombre"
+            name="name"
             value={formData.name}
             onChange={(e) =>
               setFormData((prev) => ({ ...prev, name: e.target.value }))
             }
             placeholder="Ej: Combo Familiar, 2x1 Hamburguesas"
-            error={errors.name}
+            error={state.errors?.name}
           />
 
           <Input
             label="Descripcion"
+            name="description"
             value={formData.description}
             onChange={(e) =>
               setFormData((prev) => ({ ...prev, description: e.target.value }))
@@ -469,6 +503,7 @@ export function PromotionsPage() {
 
           <Input
             label="Precio"
+            name="price"
             type="number"
             value={formData.price}
             onChange={(e) => {
@@ -481,9 +516,10 @@ export function PromotionsPage() {
             }}
             min={0}
             step={0.01}
-            error={errors.price}
+            error={state.errors?.price}
           />
 
+          <input type="hidden" name="image" value={formData.image} />
           <ImageUpload
             label="Imagen"
             value={formData.image}
@@ -498,6 +534,7 @@ export function PromotionsPage() {
               Tipo de Promocion
             </label>
             <select
+              name="promotion_type_id"
               value={formData.promotion_type_id}
               onChange={(e) =>
                 setFormData((prev) => ({ ...prev, promotion_type_id: e.target.value }))
@@ -514,52 +551,56 @@ export function PromotionsPage() {
                   </option>
                 ))}
             </select>
-            {errors.promotion_type_id && (
-              <p className="text-sm text-red-500 mt-1">{errors.promotion_type_id}</p>
+            {state.errors?.promotion_type_id && (
+              <p className="text-sm text-red-500 mt-1">{state.errors.promotion_type_id}</p>
             )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <Input
               label="Fecha de inicio"
+              name="start_date"
               type="date"
               value={formData.start_date}
               onChange={(e) =>
                 setFormData((prev) => ({ ...prev, start_date: e.target.value }))
               }
-              error={errors.start_date}
+              error={state.errors?.start_date}
             />
 
             <Input
               label="Fecha de fin"
+              name="end_date"
               type="date"
               value={formData.end_date}
               onChange={(e) =>
                 setFormData((prev) => ({ ...prev, end_date: e.target.value }))
               }
-              error={errors.end_date}
+              error={state.errors?.end_date}
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <Input
               label="Hora de inicio"
+              name="start_time"
               type="time"
               value={formData.start_time}
               onChange={(e) =>
                 setFormData((prev) => ({ ...prev, start_time: e.target.value }))
               }
-              error={errors.start_time}
+              error={state.errors?.start_time}
             />
 
             <Input
               label="Hora de fin"
+              name="end_time"
               type="time"
               value={formData.end_time}
               onChange={(e) =>
                 setFormData((prev) => ({ ...prev, end_time: e.target.value }))
               }
-              error={errors.end_time}
+              error={state.errors?.end_time}
             />
           </div>
 
@@ -570,7 +611,7 @@ export function PromotionsPage() {
               onChange={(items) =>
                 setFormData((prev) => ({ ...prev, items }))
               }
-              error={errors.items}
+              error={state.errors?.items}
             />
           </div>
 
@@ -581,18 +622,19 @@ export function PromotionsPage() {
               onChange={(branchIds) =>
                 setFormData((prev) => ({ ...prev, branch_ids: branchIds }))
               }
-              error={errors.branch_ids}
+              error={state.errors?.branch_ids}
             />
           </div>
 
           <Toggle
             label="Promocion activa"
+            name="is_active"
             checked={formData.is_active}
             onChange={(e) =>
               setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
             }
           />
-        </div>
+        </form>
       </Modal>
 
       {/* Delete Confirmation */}

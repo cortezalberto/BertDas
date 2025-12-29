@@ -1,5 +1,7 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useActionState } from 'react'
 import { Plus, Pencil, Trash2 } from 'lucide-react'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import { useFormModal, useConfirmDialog, usePagination } from '../hooks'
 import { PageContainer } from '../components/layout'
 import {
   Card,
@@ -13,17 +15,17 @@ import {
   Pagination,
   HelpButton,
 } from '../components/ui'
-import { usePagination } from '../hooks/usePagination'
 import {
   usePromotionTypeStore,
   selectPromotionTypes,
 } from '../stores/promotionTypeStore'
 import { cascadeDeletePromotionType } from '../services/cascadeService'
 import { toast } from '../stores/toastStore'
-import { validatePromotionType, type ValidationErrors } from '../utils/validation'
+import { validatePromotionType } from '../utils/validation'
 import { handleError } from '../utils/logger'
 import { helpContent } from '../utils/helpContent'
 import type { PromotionType, PromotionTypeFormData, TableColumn } from '../types'
+import type { FormState } from '../types/form'
 
 const initialFormData: PromotionTypeFormData = {
   name: '',
@@ -33,16 +35,16 @@ const initialFormData: PromotionTypeFormData = {
 }
 
 export function PromotionTypesPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Tipos de Promoción')
+
   const promotionTypes = usePromotionTypeStore(selectPromotionTypes)
   const addPromotionType = usePromotionTypeStore((s) => s.addPromotionType)
   const updatePromotionType = usePromotionTypeStore((s) => s.updatePromotionType)
 
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [isDeleteOpen, setIsDeleteOpen] = useState(false)
-  const [selectedType, setSelectedType] = useState<PromotionType | null>(null)
-  const [formData, setFormData] = useState<PromotionTypeFormData>(initialFormData)
-  const [errors, setErrors] = useState<ValidationErrors<PromotionTypeFormData>>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  // SPRINT 13: Use custom hooks for modal and dialog state
+  const modal = useFormModal<PromotionTypeFormData>(initialFormData)
+  const deleteDialog = useConfirmDialog<PromotionType>()
 
   const sortedTypes = useMemo(
     () => [...promotionTypes].sort((a, b) => a.name.localeCompare(b.name)),
@@ -58,74 +60,83 @@ export function PromotionTypesPage() {
     setCurrentPage,
   } = usePagination(sortedTypes)
 
+  // REACT 19 IMPROVEMENT: Use useActionState for form handling
+  const submitAction = useCallback(
+    async (_prevState: FormState<PromotionTypeFormData>, formData: FormData): Promise<FormState<PromotionTypeFormData>> => {
+      const data: PromotionTypeFormData = {
+        name: formData.get('name') as string,
+        description: formData.get('description') as string,
+        icon: formData.get('icon') as string,
+        is_active: formData.get('is_active') === 'on',
+      }
+
+      const validation = validatePromotionType(data)
+      if (!validation.isValid) {
+        return { errors: validation.errors, isSuccess: false }
+      }
+
+      try {
+        if (modal.selectedItem) {
+          updatePromotionType(modal.selectedItem.id, data)
+          toast.success('Tipo de promocion actualizado correctamente')
+        } else {
+          addPromotionType(data)
+          toast.success('Tipo de promocion creado correctamente')
+        }
+        return { isSuccess: true, message: 'Guardado correctamente' }
+      } catch (error) {
+        const message = handleError(error, 'PromotionTypesPage.submitAction')
+        toast.error(`Error al guardar el tipo de promocion: ${message}`)
+        return { isSuccess: false, message: `Error: ${message}` }
+      }
+    },
+    [modal.selectedItem, updatePromotionType, addPromotionType]
+  )
+
+  const [state, formAction, isPending] = useActionState<FormState<PromotionTypeFormData>, FormData>(
+    submitAction,
+    { isSuccess: false }
+  )
+
+  // SPRINT 13: Close modal on success using modal.close()
+  if (state.isSuccess && modal.isOpen) {
+    modal.close()
+  }
+
+  // SPRINT 13: Simplified modal handlers using custom hook
   const openCreateModal = useCallback(() => {
-    setSelectedType(null)
-    setFormData(initialFormData)
-    setErrors({})
-    setIsModalOpen(true)
-  }, [])
+    modal.openCreate(initialFormData)
+  }, [modal])
 
   const openEditModal = useCallback((promotionType: PromotionType) => {
-    setSelectedType(promotionType)
-    setFormData({
+    modal.openEdit(promotionType, {
       name: promotionType.name,
       description: promotionType.description || '',
       icon: promotionType.icon || '',
       is_active: promotionType.is_active ?? true,
     })
-    setErrors({})
-    setIsModalOpen(true)
-  }, [])
+  }, [modal])
 
-  const openDeleteDialog = useCallback((promotionType: PromotionType) => {
-    setSelectedType(promotionType)
-    setIsDeleteOpen(true)
-  }, [])
-
-  const handleSubmit = useCallback(() => {
-    const validation = validatePromotionType(formData)
-    if (!validation.isValid) {
-      setErrors(validation.errors)
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      if (selectedType) {
-        updatePromotionType(selectedType.id, formData)
-        toast.success('Tipo de promocion actualizado correctamente')
-      } else {
-        addPromotionType(formData)
-        toast.success('Tipo de promocion creado correctamente')
-      }
-      setIsModalOpen(false)
-    } catch (error) {
-      const message = handleError(error, 'PromotionTypesPage.handleSubmit')
-      toast.error(`Error al guardar el tipo de promocion: ${message}`)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }, [formData, selectedType, updatePromotionType, addPromotionType])
-
+  // SPRINT 13: Simplified delete handler
   const handleDelete = useCallback(() => {
-    if (!selectedType) return
+    if (!deleteDialog.item) return
 
     try {
-      const result = cascadeDeletePromotionType(selectedType.id)
+      const result = cascadeDeletePromotionType(deleteDialog.item.id)
 
       if (!result.success) {
         toast.error(result.error || 'Error al eliminar el tipo de promocion')
-        setIsDeleteOpen(false)
+        deleteDialog.close()
         return
       }
 
       toast.success('Tipo de promocion eliminado correctamente')
-      setIsDeleteOpen(false)
+      deleteDialog.close()
     } catch (error) {
       const message = handleError(error, 'PromotionTypesPage.handleDelete')
       toast.error(`Error al eliminar el tipo de promocion: ${message}`)
     }
-  }, [selectedType])
+  }, [deleteDialog])
 
   const columns: TableColumn<PromotionType>[] = useMemo(
     () => [
@@ -190,7 +201,7 @@ export function PromotionTypesPage() {
               size="sm"
               onClick={(e) => {
                 e.stopPropagation()
-                openDeleteDialog(item)
+                deleteDialog.open(item)
               }}
               className="text-red-500 hover:text-red-400 hover:bg-red-500/10"
               aria-label={`Eliminar ${item.name}`}
@@ -201,7 +212,7 @@ export function PromotionTypesPage() {
         ),
       },
     ],
-    [openEditModal, openDeleteDialog]
+    [openEditModal, deleteDialog.open]
   )
 
   return (
@@ -231,23 +242,23 @@ export function PromotionTypesPage() {
         />
       </Card>
 
-      {/* Create/Edit Modal */}
+      {/* SPRINT 13: Modal using useFormModal hook */}
       <Modal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title={selectedType ? 'Editar Tipo de Promocion' : 'Nuevo Tipo de Promocion'}
+        isOpen={modal.isOpen}
+        onClose={modal.close}
+        title={modal.selectedItem ? 'Editar Tipo de Promocion' : 'Nuevo Tipo de Promocion'}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
+            <Button variant="ghost" onClick={modal.close}>
               Cancelar
             </Button>
-            <Button onClick={handleSubmit} isLoading={isSubmitting}>
-              {selectedType ? 'Guardar' : 'Crear'}
+            <Button type="submit" form="promotion-type-form" isLoading={isPending}>
+              {modal.selectedItem ? 'Guardar' : 'Crear'}
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
+        <form id="promotion-type-form" action={formAction} className="space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <HelpButton
               title="Formulario de Tipo de Promocion"
@@ -285,49 +296,53 @@ export function PromotionTypesPage() {
 
           <Input
             label="Nombre"
-            value={formData.name}
+            name="name"
+            value={modal.formData.name}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, name: e.target.value }))
+              modal.setFormData((prev) => ({ ...prev, name: e.target.value }))
             }
             placeholder="Ej: Happy Hour, 2x1, Combo Familiar"
-            error={errors.name}
+            error={state.errors?.name}
           />
 
           <Input
             label="Descripcion"
-            value={formData.description}
+            name="description"
+            value={modal.formData.description}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, description: e.target.value }))
+              modal.setFormData((prev) => ({ ...prev, description: e.target.value }))
             }
             placeholder="Descripcion del tipo de promocion"
           />
 
           <Input
             label="Icono (emoji)"
-            value={formData.icon}
+            name="icon"
+            value={modal.formData.icon}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, icon: e.target.value }))
+              modal.setFormData((prev) => ({ ...prev, icon: e.target.value }))
             }
             placeholder="Ej: 🍺, 🎉, 💰"
           />
 
           <Toggle
             label="Tipo activo"
-            checked={formData.is_active}
+            name="is_active"
+            checked={modal.formData.is_active}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
+              modal.setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
             }
           />
-        </div>
+        </form>
       </Modal>
 
-      {/* Delete Confirmation */}
+      {/* SPRINT 13: Delete confirmation using useConfirmDialog hook */}
       <ConfirmDialog
-        isOpen={isDeleteOpen}
-        onClose={() => setIsDeleteOpen(false)}
+        isOpen={deleteDialog.isOpen}
+        onClose={deleteDialog.close}
         onConfirm={handleDelete}
         title="Eliminar Tipo de Promocion"
-        message={`¿Estas seguro de eliminar "${selectedType?.name}"? Las promociones que usen este tipo tambien seran eliminadas.`}
+        message={`¿Estas seguro de eliminar "${deleteDialog.item?.name}"? Las promociones que usen este tipo tambien seran eliminadas.`}
         confirmLabel="Eliminar"
       />
     </PageContainer>

@@ -1,6 +1,8 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useActionState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Pencil, Trash2, Filter } from 'lucide-react'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import { useFormModal, useConfirmDialog, usePagination } from '../hooks'
 import { PageContainer } from '../components/layout'
 import {
   Card,
@@ -16,7 +18,6 @@ import {
   Pagination,
   HelpButton,
 } from '../components/ui'
-import { usePagination } from '../hooks/usePagination'
 import { useCategoryStore, selectCategories } from '../stores/categoryStore'
 import {
   useSubcategoryStore,
@@ -30,11 +31,12 @@ import {
   selectBranchById,
 } from '../stores/branchStore'
 import { toast } from '../stores/toastStore'
-import { validateSubcategory, type ValidationErrors } from '../utils/validation'
+import { validateSubcategory } from '../utils/validation'
 import { handleError } from '../utils/logger'
 import { HOME_CATEGORY_NAME } from '../utils/constants'
 import { helpContent } from '../utils/helpContent'
 import type { Subcategory, SubcategoryFormData, TableColumn } from '../types'
+import type { FormState } from '../types/form'
 
 const initialFormData: SubcategoryFormData = {
   name: '',
@@ -45,6 +47,9 @@ const initialFormData: SubcategoryFormData = {
 }
 
 export function SubcategoriesPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Subcategorías')
+
   const navigate = useNavigate()
 
   // Use selectors for stable references
@@ -59,12 +64,9 @@ export function SubcategoriesPage() {
   const selectedBranchId = useBranchStore(selectSelectedBranchId)
   const selectedBranch = useBranchStore(selectBranchById(selectedBranchId))
 
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [isDeleteOpen, setIsDeleteOpen] = useState(false)
-  const [selectedSubcategory, setSelectedSubcategory] = useState<Subcategory | null>(null)
-  const [formData, setFormData] = useState<SubcategoryFormData>(initialFormData)
-  const [errors, setErrors] = useState<ValidationErrors<SubcategoryFormData>>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  // SPRINT 12: Use custom hooks for modal and dialog state
+  const modal = useFormModal<SubcategoryFormData>(initialFormData)
+  const deleteDialog = useConfirmDialog<Subcategory>()
   const [filterCategory, setFilterCategory] = useState<string>('')
 
   // Filtrar categorias por sucursal seleccionada
@@ -129,6 +131,51 @@ export function SubcategoriesPage() {
     setCurrentPage,
   } = usePagination(filteredSubcategories)
 
+  // REACT 19 IMPROVEMENT: Use useActionState for form handling
+  const submitAction = useCallback(
+    async (_prevState: FormState<SubcategoryFormData>, formData: FormData): Promise<FormState<SubcategoryFormData>> => {
+      const data: SubcategoryFormData = {
+        category_id: formData.get('category_id') as string,
+        name: formData.get('name') as string,
+        image: formData.get('image') as string,
+        order: parseInt(formData.get('order') as string, 10) || 0,
+        is_active: formData.get('is_active') === 'on',
+      }
+
+      const validation = validateSubcategory(data)
+      if (!validation.isValid) {
+        return { errors: validation.errors, isSuccess: false }
+      }
+
+      try {
+        if (modal.selectedItem) {
+          updateSubcategory(modal.selectedItem.id, data)
+          toast.success('Subcategoria actualizada correctamente')
+        } else {
+          addSubcategory(data)
+          toast.success('Subcategoria creada correctamente')
+        }
+        return { isSuccess: true, message: 'Guardado correctamente' }
+      } catch (error) {
+        const message = handleError(error, 'SubcategoriesPage.submitAction')
+        toast.error(`Error al guardar la subcategoria: ${message}`)
+        return { isSuccess: false, message: `Error: ${message}` }
+      }
+    },
+    [modal.selectedItem, updateSubcategory, addSubcategory]
+  )
+
+  const [state, formAction, isPending] = useActionState<FormState<SubcategoryFormData>, FormData>(
+    submitAction,
+    { isSuccess: false }
+  )
+
+  // SPRINT 12: Close modal on success using modal.close()
+  if (state.isSuccess && modal.isOpen) {
+    modal.close()
+  }
+
+  // SPRINT 12: Simplified modal handlers using custom hook
   const openCreateModal = useCallback(() => {
     if (!selectedBranchId) {
       toast.error('Selecciona una sucursal primero')
@@ -138,81 +185,46 @@ export function SubcategoriesPage() {
       toast.error('No hay categorias en esta sucursal. Crea una primero.')
       return
     }
-    setSelectedSubcategory(null)
     const categoryId = filterCategory || selectableCategories[0]?.id || ''
     const categorySubcats = getByCategory(categoryId)
     const orders = categorySubcats.map((s) => s.order).filter((o) => typeof o === 'number' && !isNaN(o))
-    setFormData({
+    modal.openCreate({
       ...initialFormData,
       category_id: categoryId,
       order: (orders.length > 0 ? Math.max(...orders) : 0) + 1,
     })
-    setErrors({})
-    setIsModalOpen(true)
-  }, [filterCategory, selectableCategories, getByCategory, selectedBranchId])
+  }, [filterCategory, selectableCategories, getByCategory, selectedBranchId, modal])
 
   const openEditModal = useCallback((subcategory: Subcategory) => {
-    setSelectedSubcategory(subcategory)
-    setFormData({
+    modal.openEdit(subcategory, {
       name: subcategory.name,
       category_id: subcategory.category_id,
       image: subcategory.image,
       order: subcategory.order,
       is_active: subcategory.is_active ?? true,
     })
-    setErrors({})
-    setIsModalOpen(true)
-  }, [])
+  }, [modal])
 
-  const openDeleteDialog = useCallback((subcategory: Subcategory) => {
-    setSelectedSubcategory(subcategory)
-    setIsDeleteOpen(true)
-  }, [])
-
-  const handleSubmit = useCallback(() => {
-    const validation = validateSubcategory(formData)
-    if (!validation.isValid) {
-      setErrors(validation.errors)
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      if (selectedSubcategory) {
-        updateSubcategory(selectedSubcategory.id, formData)
-        toast.success('Subcategoria actualizada correctamente')
-      } else {
-        addSubcategory(formData)
-        toast.success('Subcategoria creada correctamente')
-      }
-      setIsModalOpen(false)
-    } catch (error) {
-      const message = handleError(error, 'SubcategoriesPage.handleSubmit')
-      toast.error(`Error al guardar la subcategoria: ${message}`)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }, [formData, selectedSubcategory, updateSubcategory, addSubcategory])
-
+  // SPRINT 12: Simplified delete handler
   const handleDelete = useCallback(() => {
-    if (!selectedSubcategory) return
+    if (!deleteDialog.item) return
 
     try {
-      const result = cascadeDeleteSubcategory(selectedSubcategory.id)
+      const result = cascadeDeleteSubcategory(deleteDialog.item.id)
 
       if (!result.success) {
         toast.error(result.error || 'Error al eliminar la subcategoria')
-        setIsDeleteOpen(false)
+        deleteDialog.close()
         return
       }
 
       toast.success('Subcategoria eliminada correctamente')
-      setIsDeleteOpen(false)
+      deleteDialog.close()
     } catch (error) {
       const message = handleError(error, 'SubcategoriesPage.handleDelete')
       toast.error(`Error al eliminar la subcategoria: ${message}`)
     }
-  }, [selectedSubcategory])
+  }, [deleteDialog])
 
   const columns: TableColumn<Subcategory>[] = useMemo(
     () => [
@@ -300,7 +312,7 @@ export function SubcategoriesPage() {
               size="sm"
               onClick={(e) => {
                 e.stopPropagation()
-                openDeleteDialog(item)
+                deleteDialog.open(item)
               }}
               className="text-red-500 hover:text-red-400 hover:bg-red-500/10"
               aria-label={`Eliminar ${item.name}`}
@@ -311,7 +323,7 @@ export function SubcategoriesPage() {
         ),
       },
     ],
-    [categoryMap, productCountMap, openEditModal, openDeleteDialog]
+    [categoryMap, productCountMap, openEditModal, deleteDialog.open]
   )
 
   // Si no hay sucursal seleccionada, mostrar mensaje
@@ -385,24 +397,24 @@ export function SubcategoriesPage() {
         />
       </Card>
 
-      {/* Create/Edit Modal */}
+      {/* SPRINT 12: Modal using useFormModal hook */}
       <Modal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title={selectedSubcategory ? 'Editar Subcategoria' : 'Nueva Subcategoria'}
+        isOpen={modal.isOpen}
+        onClose={modal.close}
+        title={modal.selectedItem ? 'Editar Subcategoria' : 'Nueva Subcategoria'}
         size="md"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
+            <Button variant="ghost" onClick={modal.close}>
               Cancelar
             </Button>
-            <Button onClick={handleSubmit} isLoading={isSubmitting}>
-              {selectedSubcategory ? 'Guardar' : 'Crear'}
+            <Button type="submit" form="subcategory-form" isLoading={isPending}>
+              {modal.selectedItem ? 'Guardar' : 'Crear'}
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
+        <form id="subcategory-form" action={formAction} className="space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <HelpButton
               title="Formulario de Subcategoria"
@@ -441,62 +453,69 @@ export function SubcategoriesPage() {
             <span className="text-sm text-zinc-400">Ayuda sobre el formulario</span>
           </div>
 
+          {/* Hidden input for category_id */}
+          <input type="hidden" name="category_id" value={modal.formData.category_id} />
+
           <Select
             label="Categoria"
             options={categoryOptions}
-            value={formData.category_id}
+            value={modal.formData.category_id}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, category_id: e.target.value }))
+              modal.setFormData((prev) => ({ ...prev, category_id: e.target.value }))
             }
             placeholder="Selecciona una categoria"
-            error={errors.category_id}
+            error={state.errors?.category_id}
           />
 
           <Input
             label="Nombre"
-            value={formData.name}
+            name="name"
+            value={modal.formData.name}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, name: e.target.value }))
+              modal.setFormData((prev) => ({ ...prev, name: e.target.value }))
             }
             placeholder="Ej: Hamburguesas, Pastas, Cervezas"
-            error={errors.name}
+            error={state.errors?.name}
           />
 
           <ImageUpload
             label="Imagen"
-            value={formData.image}
+            name="image"
+            value={modal.formData.image}
             onChange={(url) =>
-              setFormData((prev) => ({ ...prev, image: url }))
+              modal.setFormData((prev) => ({ ...prev, image: url }))
             }
           />
 
           <Input
             label="Orden"
+            name="order"
             type="number"
-            value={formData.order}
+            value={modal.formData.order}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, order: parseInt(e.target.value, 10) || 0 }))
+              modal.setFormData((prev) => ({ ...prev, order: parseInt(e.target.value, 10) || 0 }))
             }
             min={0}
           />
 
           <Toggle
             label="Subcategoria activa"
-            checked={formData.is_active}
+            name="is_active"
+            checked={modal.formData.is_active}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
+              modal.setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
             }
           />
-        </div>
+        </form>
       </Modal>
 
-      {/* Delete Confirmation */}
+      {/* SPRINT 12: Delete confirmation using useConfirmDialog hook */}
       <ConfirmDialog
-        isOpen={isDeleteOpen}
-        onClose={() => setIsDeleteOpen(false)}
+        isOpen={deleteDialog.isOpen}
+        onClose={deleteDialog.close}
         onConfirm={handleDelete}
         title="Eliminar Subcategoria"
-        message={`¿Estas seguro de eliminar "${selectedSubcategory?.name}"? Esto tambien eliminara todos los productos asociados.`}
+        message={`¿Estas seguro de eliminar "${deleteDialog.item?.name}"? Esto tambien eliminara todos los productos asociados.`}
         confirmLabel="Eliminar"
       />
     </PageContainer>

@@ -22,30 +22,47 @@ Restaurant (1) → Branch (N) → Category (N) → Subcategory (N) → Product (
 ## Commands
 
 ```bash
-npm run dev       # Start dev server (port 5177)
-npm run build     # Production build
-npm run lint      # Run ESLint
-npm run preview   # Preview production build
+# Development
+npm run dev              # Start dev server on port 5177
+npm run build            # Production build
+npm run preview          # Preview production build
+
+# Code Quality
+npm run lint             # Run ESLint
+npm run type-check       # TypeScript type checking (tsc --noEmit)
+
+# Testing
+npm test                 # Run Vitest tests
+npm run test:ui          # Run tests with UI
+npm run test:coverage    # Generate coverage report
+
+# Build Analysis
+npm run build:analyze    # Analyze bundle size
 ```
 
 ## Architecture
 
 ### Tech Stack
-- React 19 + React Router 7 (nested routes under Layout)
+- React 19.2.0 + React Router 7.2.0 (nested routes under Layout)
 - TypeScript 5.9 (strict mode)
-- Zustand 5 for state management with localStorage persistence
+- Zustand 5.0.9 for state management with localStorage persistence
 - Tailwind CSS 4 for styling
 - Lucide React for icons
+- Vite 7.2.4 with code splitting and PWA support
+- babel-plugin-react-compiler 1.0.0 for automatic memoization
+- vite-plugin-pwa 1.2.0 for Progressive Web App capabilities
+- Vitest for testing (94 tests, ~3.5s execution)
 
 ### Directory Structure
 - `src/components/layout/` - Layout (with skip links), Sidebar, PageContainer
 - `src/components/ui/` - Reusable UI components (Button, Modal, HelpButton, ErrorBoundary, etc.)
-- `src/pages/` - Page components for each route
-- `src/stores/` - Zustand stores with persist middleware and selectors
-- `src/types/index.ts` - Centralized TypeScript interfaces
-- `src/hooks/` - Custom hooks (usePagination, useFocusTrap, useModal)
-- `src/utils/` - Constants, validation, and logging utilities
+- `src/pages/` - 19 page components for each route (16 functional, 3 placeholders)
+- `src/stores/` - 15 Zustand stores with persist middleware and selectors
+- `src/types/` - TypeScript interfaces (index.ts for entities, form.ts for form state)
+- `src/hooks/` - Custom hooks (useFormModal, useConfirmDialog, usePagination, useFocusTrap, useDocumentTitle, useOptimisticMutation)
+- `src/utils/` - Constants, validation, logging, sanitization, form utilities, help content
 - `src/services/` - Service layer with cascadeService for delete operations
+- `test/` - Vitest setup and test files (co-located with source)
 
 ### State Management Pattern
 All Zustand stores use selectors for optimized re-renders. Never destructure from store calls:
@@ -67,12 +84,208 @@ const addItem = useStore((s) => s.addItem)    // ✓ Use inline for actions
 // const { items } = useStore()               // ✗ Never destructure
 ```
 
-For derived/filtered data, use `useMemo` to avoid infinite loops:
+**For filtered arrays, use `useShallow` to prevent infinite loops:**
+```typescript
+import { useShallow } from 'zustand/react/shallow'
+
+// ✓ CORRECT: useShallow prevents infinite re-renders from new array references
+const staff = useStaffStore(
+  useShallow((state) =>
+    selectedBranchId ? state.staff.filter((s) => s.branch_id === selectedBranchId) : []
+  )
+)
+
+// ✗ WRONG: Creates new array reference on every render → infinite loop
+const staff = useStaffStore((state) =>
+  selectedBranchId ? state.staff.filter((s) => s.branch_id === selectedBranchId) : []
+)
+```
+
+For derived/filtered data from already-extracted state, use `useMemo`:
 ```typescript
 const filteredItems = useMemo(() =>
   items.filter(i => i.active),
   [items]
 )
+```
+
+### Custom Hooks Pattern (CRITICAL - React 19 Modernization)
+
+**Sprints 11-14 introduced reusable hooks to eliminate boilerplate in CRUD pages.**
+
+#### useFormModal Hook
+
+Replaces 3 useState calls with single hook for modal state + form data management:
+
+```typescript
+// BEFORE (old pattern - 3 useState calls):
+const [isModalOpen, setIsModalOpen] = useState(false)
+const [editingItem, setEditingItem] = useState<Item | null>(null)
+const [formData, setFormData] = useState<FormData>({ ... })
+
+// AFTER (new pattern - 1 hook call):
+import { useFormModal } from '../hooks'
+
+const modal = useFormModal<FormData>({
+  name: '',
+  description: '',
+  is_active: true,
+})
+
+// Usage:
+modal.openCreate({ ...initialFormData })          // Create mode
+modal.openEdit(item, { ...itemFormData })         // Edit mode
+modal.close()                                     // Close modal
+modal.setFormData(prev => ({ ...prev, name: 'New' })) // Update form
+modal.isOpen                                      // Boolean state
+modal.selectedItem                                // Current item being edited
+modal.formData                                    // Current form data
+```
+
+#### useConfirmDialog Hook
+
+Replaces 2 useState calls for delete confirmation dialogs:
+
+```typescript
+// BEFORE (old pattern):
+const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+const [deleteItem, setDeleteItem] = useState<Item | null>(null)
+
+// AFTER (new pattern):
+import { useConfirmDialog } from '../hooks'
+
+const deleteDialog = useConfirmDialog<Item>()
+
+// Usage:
+deleteDialog.open(item)   // Open with item
+deleteDialog.close()      // Close dialog
+deleteDialog.isOpen       // Boolean state
+deleteDialog.item         // Current item to delete
+```
+
+#### Migration Status (9/11 simple CRUD pages refactored)
+
+| Page | Sprint | Status | Lines Saved |
+|------|--------|--------|-------------|
+| Allergens | 11 | ✅ Complete | ~40 |
+| Categories | 11 | ✅ Complete | ~40 |
+| Subcategories | 11 | ✅ Complete | ~40 |
+| Branches | 12 | ✅ Complete | ~40 |
+| Badges | 12 | ✅ Complete | ~40 |
+| Seals | 13 | ✅ Complete | ~45 |
+| PromotionTypes | 13 | ✅ Complete | ~40 |
+| Roles | 14 | ✅ Complete | ~40 |
+| Staff | 14 | ✅ Complete | ~45 |
+| Products | - | ⏳ Not yet (complex page) | - |
+| Promotions | - | ⏳ Not yet (complex page) | - |
+| Tables | - | N/A (different pattern) | - |
+| Settings | - | N/A (no modal pattern) | - |
+| Restaurant | - | N/A (no modal pattern) | - |
+
+**Total:** ~370 lines eliminated, 27 useState declarations removed
+
+#### 4-Step Refactoring Pattern (Proven across 9 pages)
+
+When refactoring CRUD pages to use custom hooks:
+
+1. **Update imports:**
+   ```typescript
+   import { useFormModal, useConfirmDialog } from '../hooks'
+   ```
+
+2. **Replace useState with hooks:**
+   ```typescript
+   // Remove these 3 lines:
+   // const [isModalOpen, setIsModalOpen] = useState(false)
+   // const [editingItem, setEditingItem] = useState<Item | null>(null)
+   // const [formData, setFormData] = useState<FormData>({ ... })
+
+   // Add this 1 line:
+   const modal = useFormModal<FormData>({ ...initialFormData })
+
+   // And for delete:
+   const deleteDialog = useConfirmDialog<Item>()
+   ```
+
+3. **Simplify modal handlers:**
+   ```typescript
+   // openCreateModal: modal.openCreate({ ...data })
+   // openEditModal: modal.openEdit(item, { ...data })
+   // closeModal: modal.close()
+   ```
+
+4. **Update JSX references:**
+   ```typescript
+   // isModalOpen → modal.isOpen
+   // editingItem → modal.selectedItem
+   // formData → modal.formData
+   // setFormData → modal.setFormData
+   ```
+
+**Common pitfall:** When using `replace_all` for formData, the submitAction parameter name also gets changed. Always manually restore it to `formData` after using replace_all.
+
+#### Code Splitting Achievement
+
+Custom hooks are automatically code-split into separate chunks:
+- `useFormModal-*.js`: 0.77 kB (0.48 kB gzipped)
+- `useConfirmDialog-*.js`: 0.49 kB (0.33 kB gzipped)
+
+### React 19 Form Pattern with useActionState
+
+All CRUD pages use React 19's useActionState hook for form handling:
+
+```typescript
+import { useActionState, useCallback } from 'react'
+import type { FormState } from '../types/form'
+
+const submitAction = useCallback(
+  async (_prevState: FormState<T>, formData: FormData): Promise<FormState<T>> => {
+    const data: T = {
+      field1: formData.get('field1') as string,
+      field2: parseInt(formData.get('field2') as string, 10) || 0,
+      is_active: formData.get('is_active') === 'on',
+    }
+
+    const validation = validateData(data)
+    if (!validation.isValid) {
+      return { errors: validation.errors, isSuccess: false }
+    }
+
+    try {
+      if (modal.selectedItem) {
+        updateItem(modal.selectedItem.id, data)
+        toast.success('Actualizado correctamente')
+      } else {
+        addItem(data)
+        toast.success('Creado correctamente')
+      }
+      return { isSuccess: true, message: 'Guardado correctamente' }
+    } catch (error) {
+      const message = handleError(error, 'Component.submitAction')
+      toast.error(`Error: ${message}`)
+      return { isSuccess: false, message: `Error: ${message}` }
+    }
+  },
+  [modal.selectedItem, updateItem, addItem]
+)
+
+const [state, formAction, isPending] = useActionState<FormState<T>, FormData>(
+  submitAction,
+  { isSuccess: false }
+)
+
+// Close modal on success
+if (state.isSuccess && modal.isOpen) {
+  modal.close()
+}
+
+// In JSX:
+<form id="item-form" action={formAction}>
+  {/* form fields */}
+</form>
+<Button type="submit" form="item-form" isLoading={isPending}>
+  {modal.selectedItem ? 'Guardar' : 'Crear'}
+</Button>
 ```
 
 ### Branch-Scoped Data
@@ -193,14 +406,25 @@ if (!isPositiveNumber(data.price)) {
 }
 ```
 
-### Error Handling
-Use `handleError()` from `src/utils/logger.ts` in catch blocks:
+### Error Handling and Logging
+Use centralized logging utilities from `src/utils/logger.ts`:
 ```typescript
+import { handleError, logWarning, logInfo } from '../utils/logger'
+
+// In catch blocks - returns user-friendly message
 catch (error) {
   const message = handleError(error, 'ComponentName.functionName')
   toast.error(message)
 }
+
+// For non-critical warnings (always logged)
+logWarning('Invalid array structure', 'componentName', dataObject)
+
+// For development info (only logged in DEV mode)
+logInfo('Processing items', 'componentName', { count: items.length })
 ```
+
+**Important:** Never use `console.log/warn/error` directly. Always use logger utilities for consistent, production-safe logging.
 
 ### Routing
 Routes nested under Layout component (includes skip link for accessibility):
@@ -210,6 +434,7 @@ Routes nested under Layout component (includes skip link for accessibility):
   - `/branches` - Branch management (CRUD)
   - `/branches/tables` - Tables management (full CRUD with status workflow)
   - `/branches/staff` - Staff management (placeholder)
+  - `/branches/staff/roles` - Staff roles management (full CRUD)
   - `/branches/orders` - Orders management (placeholder)
 - **Gestión > Productos:**
   - `/categories` - Category management (branch-scoped)
@@ -237,12 +462,14 @@ Restaurante
   ▸ Sucursales (collapsible subgroup)
     - Todas → /branches
     - Mesas → /branches/tables
-    - Personal → /branches/staff
+    ▸ Personal (collapsible subgroup)
+      - Gestión → /branches/staff
+      - Roles → /branches/staff/roles
     - Pedidos → /branches/orders
   ▸ Productos (collapsible subgroup)
     - Categorías → /categories
     - Subcategorías → /subcategories
-    - Platos → /products
+    - Platos y Bebidas → /products
     - Alérgenos → /allergens
     - Insignia → /badges
     - Sellos → /seals
@@ -476,23 +703,28 @@ Help content is centralized in `src/utils/helpContent.tsx` with entries for: das
 - Input component automatically links errors via `aria-describedby`
 
 ### Store Migrations
-When modifying data structure, increment version in `STORE_VERSIONS` and add migrate function. **Always use immutable patterns** (never mutate persisted state directly):
+When modifying data structure, increment version in `STORE_VERSIONS` and add migrate function. **Always use TypeScript strict mode with type guards**:
 ```typescript
 persist(
   (set, get) => ({ ... }),
   {
     name: STORAGE_KEYS.PRODUCTS,
     version: STORE_VERSIONS.PRODUCTS,
-    migrate: (persistedState, version) => {
-      const persisted = persistedState as { products: Product[] }
-
-      // Use local variables, never mutate persisted directly
-      let products = persisted.products
-
-      // Validate array exists
-      if (!Array.isArray(products)) {
+    migrate: (persistedState: unknown, version: number) => {
+      // ✓ CORRECT: Type guard with unknown, validate structure
+      if (!persistedState || typeof persistedState !== 'object') {
         return { products: initialProducts }
       }
+
+      const state = persistedState as { products?: unknown }
+
+      // Validate array exists
+      if (!Array.isArray(state.products)) {
+        return { products: initialProducts }
+      }
+
+      // Use local variable for transformations
+      let products = state.products
 
       // Non-destructive merge: only add missing initial items
       if (version < 4) {
@@ -509,12 +741,18 @@ persist(
         }))
       }
 
-      // Return new object, don't mutate original
-      return { products }
+      // Return new object, typed correctly
+      return { products } as State
     },
   }
 )
 ```
+
+**Migration Type Safety:**
+- Always use `unknown` for `persistedState` parameter (never `any`)
+- Add type guards to validate structure before casting
+- Return early with safe defaults if validation fails
+- Cast return value to State type for type safety
 
 ### Toast Notifications
 Use the `toast` helper from `src/stores/toastStore.ts`:
@@ -596,6 +834,24 @@ The Modal component tracks open modal count via `document.body.dataset.modalCoun
 - Nested modals (e.g., confirm dialog inside edit modal) work correctly
 - No scroll restoration bugs when closing inner modals
 
+## Environment-Conditional Mock Data
+
+Mock data is conditionally loaded based on environment:
+```typescript
+// In stores - use import.meta.env.DEV for mock data
+export const useStaffStore = create<StaffState>()(
+  persist(
+    (set, get) => ({
+      staff: import.meta.env.DEV ? initializeSampleStaff() : [],
+      // ... actions
+    }),
+    { name: STORAGE_KEYS.STAFF, version: STORE_VERSIONS.STAFF }
+  )
+)
+```
+
+**Exception:** Predefined system data (Roles, Allergens, Badges, Seals, PromotionTypes) is always included as it's required for app functionality.
+
 ## Mock Data Structure
 
 All stores contain consistent mock data for development. Key relationships:
@@ -637,17 +893,38 @@ const validateImportData = (data: unknown) => {
 }
 ```
 
-### URL Sanitization
-`ImageUpload` component validates URLs to prevent XSS:
+### Input Sanitization
+Use utilities from `src/utils/sanitization.ts` for all user inputs:
 ```typescript
-// Only http:// and https:// protocols allowed
-// Blocks javascript:, data:, and other dangerous protocols
-const sanitized = sanitizeImageUrl(inputUrl)
-if (!sanitized) {
-  setUrlError('URL invalida. Usa una URL http:// o https://')
+import {
+  sanitizeImageUrl,
+  sanitizeHtml,
+  isSafeFilename,
+  stripDangerousChars
+} from '../utils/sanitization'
+
+// ✓ Image URLs - Only http/https protocols, blocks XSS
+const imageUrl = sanitizeImageUrl(userInput, '/placeholder.jpg')
+
+// ✓ HTML content - Escapes special characters
+const safeText = sanitizeHtml('<script>alert(1)</script>')
+// Returns: '&lt;script&gt;alert(1)&lt;/script&gt;'
+
+// ✓ Filenames - Prevents path traversal
+if (!isSafeFilename(filename)) {
+  toast.error('Nombre de archivo no válido')
   return
 }
+
+// ✓ General text - Strips dangerous characters
+const cleanInput = stripDangerousChars(userInput)
 ```
+
+**Security Rules:**
+- Never render user input without sanitization
+- Always validate URLs before using in `<img>` src
+- Block `javascript:`, `data:`, `file:`, and other non-http protocols
+- Check filenames for `..`, `/`, `\`, and null bytes
 
 ### Validation Consistency
 All validators in `validation.ts` use:
@@ -691,15 +968,96 @@ parseInt(e.target.value, 10) || 0
 
 ## Current State
 
-- All data is client-side with mock data in stores (4 branches with categories/products)
-- No backend integration - `src/services/` is ready for API client
-- Uses `crypto.randomUUID()` for ID generation
-- ErrorBoundary wraps the entire app in App.tsx
-- 12 predefined allergens (Gluten, Lacteos, Huevos, Pescado, Mariscos, Frutos Secos, Soja, Apio, Mostaza, Sesamo, Sulfitos, Altramuces)
-- 4 predefined badges (Nuevo, Popular, Recomendado, Especial del Chef)
-- 6 predefined seals (Vegano, Vegetariano, Sin Gluten, Orgánico, Sin Lactosa, Bajo en Sodio)
-- 4 predefined promotion types (Happy Hour, Combo Familiar, 2x1, Descuento)
-- Tables page fully implemented with status workflow and archive feature
-- Staff and Orders pages are placeholder stubs under `/branches/*`
-- Statistics pages (Sales, History by Branch/Customer) are placeholders
-- Store versions: BRANCHES=4, CATEGORIES=3, SUBCATEGORIES=3, PRODUCTS=5, ALLERGENS=2, BADGES=1, SEALS=1, PROMOTIONS=3, PROMOTION_TYPES=2, TABLES=6, ORDER_HISTORY=1
+### Implementation Status
+- ✅ All data is client-side with mock data in stores (4 branches with categories/products)
+- ✅ 15 Zustand stores with localStorage persistence
+- ✅ 19 pages (16 functional, 3 placeholders: Orders, Statistics)
+- ✅ Complete table workflow system (5 states)
+- ✅ Cascade delete service with dependency injection
+- ✅ Branch-specific pricing system
+- ✅ Promotions with temporal scheduling
+- ✅ Staff and roles management
+- ✅ PWA with offline support
+- ✅ 94 automated tests (Vitest + @testing-library/react)
+- ✅ React 19 with automatic memoization (React Compiler)
+- ✅ Custom hooks pattern (9/11 simple CRUD pages migrated)
+- ✅ No backend integration - `src/services/` is ready for API client
+
+### React 19 Modernization (14 Sprints Complete)
+1. ✅ Forms migrated to useActionState
+2. ✅ Components modernized with ref as prop
+3. ✅ React Compiler enabled (automatic memoization)
+4. ✅ Performance monitoring tools
+5. ✅ PWA implementation
+6. ✅ Production readiness (SEO, security)
+7. ✅ Test infrastructure, accessibility
+8. ✅ Custom hooks for reusability (useFormModal, useConfirmDialog)
+9. ✅ Optimistic mutations, shared utilities
+10. ✅ Comprehensive testing, performance optimization (94 tests)
+11. ✅ Simple CRUD pages refactored (Allergens, Categories, Subcategories)
+12. ✅ Simple CRUD pages refactored (Branches, Badges)
+13. ✅ Simple CRUD pages refactored (Seals, PromotionTypes)
+14. ✅ Final simple CRUD pages (Roles, Staff)
+
+**See REACT_19_MODERNIZATION.md for detailed sprint documentation.**
+
+### Predefined System Data
+- 12 allergens (Gluten, Lacteos, Huevos, Pescado, Mariscos, Frutos Secos, Soja, Apio, Mostaza, Sesamo, Sulfitos, Altramuces)
+- 4 badges (Nuevo, Popular, Recomendado, Especial del Chef)
+- 6 seals (Vegano, Vegetariano, Sin Gluten, Orgánico, Sin Lactosa, Bajo en Sodio)
+- 4 roles (Cocinero, Mozo, Administrativo, Gerente)
+- 4 promotion types (Happy Hour, Combo Familiar, 2x1, Descuento)
+
+### Mock Development Data
+- 1 restaurant (`restaurant-1`)
+- 4 branches (`branch-1` to `branch-4`)
+- 45 tables (distributed: 15 + 12 + 10 + 8 per branch)
+- Sample products with simple IDs ('1' to '14')
+- Sample staff members
+
+### Store Versions
+BRANCHES=4, CATEGORIES=3, SUBCATEGORIES=3, PRODUCTS=5, ALLERGENS=2, BADGES=1, SEALS=1, ROLES=1, STAFF=2, PROMOTIONS=3, PROMOTION_TYPES=2, TABLES=6, ORDER_HISTORY=1
+
+### Utilities
+- `crypto.randomUUID()` for ID generation
+- ErrorBoundary wraps entire app
+- Centralized logging via `logger.ts`
+- Centralized validation via `validation.ts`
+- Input sanitization via `sanitization.ts`
+
+## Code Quality Standards
+
+### TypeScript Strict Mode
+- Always use `unknown` instead of `any` for unknown types
+- Use type guards to validate structure before casting
+- Never bypass strict type checking with `as any`
+- Properly type all function parameters and return values
+
+### Performance Optimization
+- Use `useShallow` from zustand/react/shallow for filtered array selectors
+- Extract selectors to constants for reusability
+- Memoize expensive computations with `useMemo`
+- Use `useCallback` for event handlers to prevent unnecessary re-renders
+- React Compiler automatically memoizes components (babel-plugin-react-compiler)
+- Manual React.memo for frequently re-rendered components:
+  - **Card** (100+ usages) - ~30% fewer re-renders
+  - **CardHeader** (20+ usages)
+  - **Badge** (100+ usages) - ~35% fewer re-renders
+  - **Table** (20+ usages) - ~35% fewer re-renders
+  - **Modal** (16+ usages) - ~40% fewer re-renders
+- Code splitting: Custom hooks split into separate chunks for optimal loading
+- Build size: ~246 kB total (77.6 kB gzipped)
+- PWA caching: Workbox precache + runtime caching for fonts
+
+### Security Best Practices
+- Sanitize all user inputs before use (URLs, filenames, HTML)
+- Use centralized logging (never direct console.*)
+- Validate file uploads (type, size, structure)
+- Return user-friendly error messages (never expose internals)
+
+### Accessibility Requirements
+- All interactive elements must have accessible labels
+- Use semantic HTML (`<button>` not `<div onClick>`)
+- Provide `sr-only` text for screen readers
+- Include `aria-label`, `aria-describedby`, and `role` attributes
+- Maintain keyboard navigation support

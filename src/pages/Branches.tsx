@@ -1,6 +1,8 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useActionState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Pencil, Trash2, MapPin, ExternalLink } from 'lucide-react'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import { useFormModal, useConfirmDialog, usePagination } from '../hooks'
 import { PageContainer } from '../components/layout'
 import {
   Card,
@@ -14,17 +16,17 @@ import {
   Badge,
   Pagination,
 } from '../components/ui'
-import { usePagination } from '../hooks/usePagination'
 import { useBranchStore, selectBranches } from '../stores/branchStore'
 import { useCategoryStore } from '../stores/categoryStore'
 import { useRestaurantStore, selectRestaurant } from '../stores/restaurantStore'
 import { cascadeDeleteBranch } from '../services/cascadeService'
 import { toast } from '../stores/toastStore'
-import { validateBranch, type ValidationErrors } from '../utils/validation'
+import { validateBranch } from '../utils/validation'
 import { handleError } from '../utils/logger'
 import { HOME_CATEGORY_NAME, BRANCH_DEFAULT_OPENING_TIME, BRANCH_DEFAULT_CLOSING_TIME } from '../utils/constants'
 import { helpContent } from '../utils/helpContent'
 import type { Branch, BranchFormData, TableColumn } from '../types'
+import type { FormState } from '../types/form'
 
 const initialFormData: BranchFormData = {
   name: '',
@@ -39,6 +41,9 @@ const initialFormData: BranchFormData = {
 }
 
 export function BranchesPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Sucursales')
+
   const navigate = useNavigate()
   const restaurant = useRestaurantStore(selectRestaurant)
   const branches = useBranchStore(selectBranches)
@@ -48,12 +53,9 @@ export function BranchesPage() {
 
   const getByBranch = useCategoryStore((s) => s.getByBranch)
 
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [isDeleteOpen, setIsDeleteOpen] = useState(false)
-  const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null)
-  const [formData, setFormData] = useState<BranchFormData>(initialFormData)
-  const [errors, setErrors] = useState<ValidationErrors<BranchFormData>>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  // SPRINT 12: Use custom hooks for modal and dialog state
+  const modal = useFormModal<BranchFormData>(initialFormData)
+  const deleteDialog = useConfirmDialog<Branch>()
 
   const sortedBranches = useMemo(
     () => [...branches].sort((a, b) => a.order - b.order),
@@ -69,20 +71,69 @@ export function BranchesPage() {
     setCurrentPage,
   } = usePagination(sortedBranches)
 
+  // REACT 19 IMPROVEMENT: Use useActionState for form handling
+  const submitAction = useCallback(
+    async (_prevState: FormState<BranchFormData>, formData: FormData): Promise<FormState<BranchFormData>> => {
+      const data: BranchFormData = {
+        name: formData.get('name') as string,
+        address: formData.get('address') as string,
+        phone: formData.get('phone') as string,
+        email: formData.get('email') as string,
+        image: formData.get('image') as string,
+        opening_time: formData.get('opening_time') as string,
+        closing_time: formData.get('closing_time') as string,
+        is_active: formData.get('is_active') === 'on',
+        order: parseInt(formData.get('order') as string, 10) || 0,
+      }
+
+      const validation = validateBranch(data)
+      if (!validation.isValid) {
+        return { errors: validation.errors, isSuccess: false }
+      }
+
+      try {
+        if (modal.selectedItem) {
+          updateBranch(modal.selectedItem.id, data)
+          toast.success('Sucursal actualizada correctamente')
+        } else {
+          if (!restaurant) {
+            toast.error('Crea un restaurante primero en la seccion Restaurante')
+            return { isSuccess: false, message: 'No hay restaurante' }
+          }
+          addBranch({ ...data, restaurant_id: restaurant.id })
+          toast.success('Sucursal creada correctamente')
+        }
+        return { isSuccess: true, message: 'Guardado correctamente' }
+      } catch (error) {
+        const message = handleError(error, 'BranchesPage.submitAction')
+        toast.error(`Error al guardar la sucursal: ${message}`)
+        return { isSuccess: false, message: `Error: ${message}` }
+      }
+    },
+    [modal.selectedItem, updateBranch, addBranch, restaurant]
+  )
+
+  const [state, formAction, isPending] = useActionState<FormState<BranchFormData>, FormData>(
+    submitAction,
+    { isSuccess: false }
+  )
+
+  // SPRINT 12: Close modal on success using modal.close()
+  if (state.isSuccess && modal.isOpen) {
+    modal.close()
+  }
+
+  // SPRINT 12: Simplified modal handlers using custom hook
   const openCreateModal = useCallback(() => {
-    setSelectedBranch(null)
     const orders = branches.map((b) => b.order).filter((o) => typeof o === 'number' && !isNaN(o))
-    setFormData({
+    modal.openCreate({
       ...initialFormData,
       order: (orders.length > 0 ? Math.max(...orders) : 0) + 1,
     })
-    setErrors({})
-    setIsModalOpen(true)
-  }, [branches])
+  }, [branches, modal])
 
   const openEditModal = useCallback((branch: Branch) => {
-    setSelectedBranch(branch)
-    setFormData({
+    modal.openEdit(branch, {
       name: branch.name,
       address: branch.address || '',
       phone: branch.phone || '',
@@ -93,14 +144,7 @@ export function BranchesPage() {
       is_active: branch.is_active ?? true,
       order: branch.order,
     })
-    setErrors({})
-    setIsModalOpen(true)
-  }, [])
-
-  const openDeleteDialog = useCallback((branch: Branch) => {
-    setSelectedBranch(branch)
-    setIsDeleteOpen(true)
-  }, [])
+  }, [modal])
 
   const handleViewMenu = useCallback(
     (branch: Branch) => {
@@ -110,55 +154,26 @@ export function BranchesPage() {
     [selectBranch, navigate]
   )
 
-  const handleSubmit = useCallback(() => {
-    const validation = validateBranch(formData)
-    if (!validation.isValid) {
-      setErrors(validation.errors)
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      if (selectedBranch) {
-        updateBranch(selectedBranch.id, formData)
-        toast.success('Sucursal actualizada correctamente')
-      } else {
-        if (!restaurant) {
-          toast.error('Crea un restaurante primero en la seccion Restaurante')
-          setIsSubmitting(false)
-          return
-        }
-        addBranch({ ...formData, restaurant_id: restaurant.id })
-        toast.success('Sucursal creada correctamente')
-      }
-      setIsModalOpen(false)
-    } catch (error) {
-      const message = handleError(error, 'BranchesPage.handleSubmit')
-      toast.error(`Error al guardar la sucursal: ${message}`)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }, [formData, selectedBranch, updateBranch, addBranch, restaurant])
-
+  // SPRINT 12: Simplified delete handler
   const handleDelete = useCallback(() => {
-    if (!selectedBranch) return
+    if (!deleteDialog.item) return
 
     try {
-      const result = cascadeDeleteBranch(selectedBranch.id)
+      const result = cascadeDeleteBranch(deleteDialog.item.id)
 
       if (!result.success) {
         toast.error(result.error || 'Error al eliminar la sucursal')
-        setIsDeleteOpen(false)
+        deleteDialog.close()
         return
       }
 
       toast.success('Sucursal eliminada correctamente')
-      setIsDeleteOpen(false)
+      deleteDialog.close()
     } catch (error) {
       const message = handleError(error, 'BranchesPage.handleDelete')
       toast.error(`Error al eliminar la sucursal: ${message}`)
     }
-  }, [selectedBranch])
+  }, [deleteDialog])
 
   const columns: TableColumn<Branch>[] = useMemo(
     () => [
@@ -264,7 +279,7 @@ export function BranchesPage() {
               size="sm"
               onClick={(e) => {
                 e.stopPropagation()
-                openDeleteDialog(item)
+                deleteDialog.open(item)
               }}
               className="text-red-500 hover:text-red-400 hover:bg-red-500/10"
               aria-label={`Eliminar ${item.name}`}
@@ -275,7 +290,7 @@ export function BranchesPage() {
         ),
       },
     ],
-    [getByBranch, handleViewMenu, openEditModal, openDeleteDialog]
+    [getByBranch, handleViewMenu, openEditModal, deleteDialog.open]
   )
 
   return (
@@ -310,101 +325,109 @@ export function BranchesPage() {
         />
       </Card>
 
-      {/* Create/Edit Modal */}
+      {/* SPRINT 12: Modal using useFormModal hook */}
       <Modal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title={selectedBranch ? 'Editar Sucursal' : 'Nueva Sucursal'}
+        isOpen={modal.isOpen}
+        onClose={modal.close}
+        title={modal.selectedItem ? 'Editar Sucursal' : 'Nueva Sucursal'}
         size="md"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
+            <Button variant="ghost" onClick={modal.close}>
               Cancelar
             </Button>
-            <Button onClick={handleSubmit} isLoading={isSubmitting}>
-              {selectedBranch ? 'Guardar' : 'Crear'}
+            <Button type="submit" form="branch-form" isLoading={isPending}>
+              {modal.selectedItem ? 'Guardar' : 'Crear'}
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
+        <form id="branch-form" action={formAction} className="space-y-4">
           <Input
             label="Nombre"
-            value={formData.name}
+            name="name"
+            value={modal.formData.name}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, name: e.target.value }))
+              modal.setFormData((prev) => ({ ...prev, name: e.target.value }))
             }
             placeholder="Ej: Buen Sabor Centro"
-            error={errors.name}
+            error={state.errors?.name}
           />
 
           <Input
             label="Direccion"
-            value={formData.address}
+            name="address"
+            value={modal.formData.address}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, address: e.target.value }))
+              modal.setFormData((prev) => ({ ...prev, address: e.target.value }))
             }
             placeholder="Ej: Av. Corrientes 1234, CABA"
-            error={errors.address}
+            error={state.errors?.address}
           />
 
           <div className="grid grid-cols-2 gap-4">
             <Input
               label="Telefono"
-              value={formData.phone}
+              name="phone"
+              value={modal.formData.phone}
               onChange={(e) =>
-                setFormData((prev) => ({ ...prev, phone: e.target.value }))
+                modal.setFormData((prev) => ({ ...prev, phone: e.target.value }))
               }
               placeholder="Ej: +54 11 1234-5678"
-              error={errors.phone}
+              error={state.errors?.phone}
             />
 
             <Input
               label="Email"
+              name="email"
               type="email"
-              value={formData.email}
+              value={modal.formData.email}
               onChange={(e) =>
-                setFormData((prev) => ({ ...prev, email: e.target.value }))
+                modal.setFormData((prev) => ({ ...prev, email: e.target.value }))
               }
               placeholder="Ej: sucursal@buensabor.com"
-              error={errors.email}
+              error={state.errors?.email}
             />
           </div>
 
+          <input type="hidden" name="image" value={modal.formData.image} />
           <ImageUpload
             label="Imagen"
-            value={formData.image}
-            onChange={(url) => setFormData((prev) => ({ ...prev, image: url }))}
+            value={modal.formData.image}
+            onChange={(url) => modal.setFormData((prev) => ({ ...prev, image: url }))}
           />
 
           <div className="grid grid-cols-2 gap-4">
             <Input
               label="Horario de Apertura"
+              name="opening_time"
               type="time"
-              value={formData.opening_time}
+              value={modal.formData.opening_time}
               onChange={(e) =>
-                setFormData((prev) => ({ ...prev, opening_time: e.target.value }))
+                modal.setFormData((prev) => ({ ...prev, opening_time: e.target.value }))
               }
-              error={errors.opening_time}
+              error={state.errors?.opening_time}
             />
 
             <Input
               label="Horario de Cierre"
+              name="closing_time"
               type="time"
-              value={formData.closing_time}
+              value={modal.formData.closing_time}
               onChange={(e) =>
-                setFormData((prev) => ({ ...prev, closing_time: e.target.value }))
+                modal.setFormData((prev) => ({ ...prev, closing_time: e.target.value }))
               }
-              error={errors.closing_time}
+              error={state.errors?.closing_time}
             />
           </div>
 
           <Input
             label="Orden"
+            name="order"
             type="number"
-            value={formData.order}
+            value={modal.formData.order}
             onChange={(e) =>
-              setFormData((prev) => ({
+              modal.setFormData((prev) => ({
                 ...prev,
                 order: parseInt(e.target.value, 10) || 0,
               }))
@@ -414,21 +437,22 @@ export function BranchesPage() {
 
           <Toggle
             label="Sucursal activa"
-            checked={formData.is_active}
+            name="is_active"
+            checked={modal.formData.is_active}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
+              modal.setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
             }
           />
-        </div>
+        </form>
       </Modal>
 
-      {/* Delete Confirmation */}
+      {/* SPRINT 12: Delete confirmation using useConfirmDialog hook */}
       <ConfirmDialog
-        isOpen={isDeleteOpen}
-        onClose={() => setIsDeleteOpen(false)}
+        isOpen={deleteDialog.isOpen}
+        onClose={deleteDialog.close}
         onConfirm={handleDelete}
         title="Eliminar Sucursal"
-        message={`¿Estas seguro de eliminar "${selectedBranch?.name}"? Esto eliminara TODAS las categorias, subcategorias y productos asociados a esta sucursal.`}
+        message={`¿Estas seguro de eliminar "${deleteDialog.item?.name}"? Esto eliminara TODAS las categorias, subcategorias y productos asociados a esta sucursal.`}
         confirmLabel="Eliminar"
       />
       </PageContainer>

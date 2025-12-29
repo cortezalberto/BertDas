@@ -1,13 +1,14 @@
-import { type InputHTMLAttributes, forwardRef, useId } from 'react'
+import { type InputHTMLAttributes, useId } from 'react'
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string
   error?: string
   helperText?: string
+  ref?: React.Ref<HTMLInputElement>
 }
 
-export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ label, error, helperText, className = '', id, ...props }, ref) => {
+// REACT 19 IMPROVEMENT: Modernized component without forwardRef
+export function Input({ label, error, helperText, className = '', id, ref, ...props }: InputProps) {
     const generatedId = useId()
     const inputId = id || generatedId
     const errorId = `${inputId}-error`
@@ -18,7 +19,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         {label && (
           <label
             htmlFor={inputId}
-            className="block text-sm font-medium text-zinc-300 mb-1.5"
+            className="block text-sm font-medium text-[#e4e4e7] mb-2"
+            style={{ fontFamily: 'var(--font-body)' }}
           >
             {label}
           </label>
@@ -32,29 +34,34 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           }
           className={`
             w-full px-3 py-2
-            bg-zinc-800 border rounded-lg
-            text-white placeholder-zinc-500
-            transition-colors duration-200
-            focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent
+            bg-[#3f3f46] border rounded-lg
+            text-[#fafafa] placeholder-[#71717a]
+            transition-all duration-200
+            focus:outline-none focus:ring-2 focus:ring-[#f97316] focus:border-transparent focus:bg-[#27272a]
+            focus:shadow-[0_0_0_3px_rgba(249,115,22,0.1)]
             disabled:opacity-50 disabled:cursor-not-allowed
-            ${error ? 'border-red-500' : 'border-zinc-700 hover:border-zinc-600'}
+            ${error ? 'border-[#ef4444] bg-[rgba(127,29,29,0.1)]' : 'border-[#52525b] hover:border-[#71717a]'}
             ${className}
           `}
+          style={{ fontFamily: 'var(--font-body)' }}
           {...props}
         />
         {error && (
-          <p id={errorId} className="mt-1 text-sm text-red-500" role="alert">
+          <p
+            id={errorId}
+            className="mt-1.5 text-xs font-medium text-[#fca5a5]"
+            role="alert"
+          >
             {error}
           </p>
         )}
         {helperText && !error && (
-          <p id={helperId} className="mt-1 text-sm text-zinc-500">
+          <p id={helperId} className="mt-1.5 text-xs text-[#71717a]">
             {helperText}
           </p>
         )}
       </div>
     )
-  }
-)
+}
 
 Input.displayName = 'Input'

@@ -40,3 +40,29 @@ export function handleError(error: unknown, context: string): string {
   const errorType = classifyError(error)
   return USER_FRIENDLY_MESSAGES[errorType]
 }
+
+/**
+ * Warning logger for non-critical issues
+ * Use this instead of console.warn for consistent logging
+ */
+export function logWarning(message: string, context: string, data?: unknown): void {
+  console.warn(`[${context}]`, message, data)
+}
+
+/**
+ * Info logger for general information
+ * Use this instead of console.log for consistent logging
+ */
+export function logInfo(message: string, context: string, data?: unknown): void {
+  if (import.meta.env.DEV) {
+    console.log(`[${context}]`, message, data)
+  }
+}
+
+/**
+ * Error logger for critical issues
+ * Use this instead of console.error for consistent logging
+ */
+export function logError(message: string, context: string, data?: unknown): void {
+  console.error(`[${context}]`, message, data)
+}

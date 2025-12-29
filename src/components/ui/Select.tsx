@@ -1,4 +1,4 @@
-import { type SelectHTMLAttributes, forwardRef, useId } from 'react'
+import { type SelectHTMLAttributes, useId } from 'react'
 
 interface SelectOption {
   value: string
@@ -10,13 +10,11 @@ interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   error?: string
   options: SelectOption[]
   placeholder?: string
+  ref?: React.Ref<HTMLSelectElement>
 }
 
-export const Select = forwardRef<HTMLSelectElement, SelectProps>(
-  (
-    { label, error, options, placeholder, className = '', id, ...props },
-    ref
-  ) => {
+// REACT 19 IMPROVEMENT: Modernized component without forwardRef
+export function Select({ label, error, options, placeholder, className = '', id, ref, ...props }: SelectProps) {
     const generatedId = useId()
     const selectId = id || generatedId
     const errorId = `${selectId}-error`
@@ -66,7 +64,6 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
         )}
       </div>
     )
-  }
-)
+}
 
 Select.displayName = 'Select'

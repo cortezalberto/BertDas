@@ -12,6 +12,8 @@ import type {
   PromotionTypeFormData,
   RestaurantTableFormData,
 } from '../types'
+import type { CreateStaffData } from '../types/staff'
+import type { CreateRoleData } from '../types/role'
 
 export type ValidationErrors<T> = Partial<Record<keyof T, string>>
 
@@ -618,6 +620,102 @@ export function validateTable(
         errors.close_time = 'La hora de cierre no puede ser menor a la hora de pedido'
       }
     }
+  }
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+  }
+}
+
+// Staff validation
+export function validateStaff(data: CreateStaffData): ValidationResult<CreateStaffData> {
+  const errors: ValidationErrors<CreateStaffData> = {}
+
+  if (!data.branch_id) {
+    errors.branch_id = 'La sucursal es requerida'
+  }
+
+  if (!data.role_id) {
+    errors.role_id = 'El rol es requerido'
+  }
+
+  const trimmedFirstName = data.first_name.trim()
+  if (!trimmedFirstName) {
+    errors.first_name = 'El nombre es requerido'
+  } else if (trimmedFirstName.length < MIN_NAME_LENGTH) {
+    errors.first_name = `El nombre debe tener al menos ${MIN_NAME_LENGTH} caracteres`
+  } else if (trimmedFirstName.length > MAX_NAME_LENGTH) {
+    errors.first_name = `El nombre no puede exceder ${MAX_NAME_LENGTH} caracteres`
+  }
+
+  const trimmedLastName = data.last_name.trim()
+  if (!trimmedLastName) {
+    errors.last_name = 'El apellido es requerido'
+  } else if (trimmedLastName.length < MIN_NAME_LENGTH) {
+    errors.last_name = `El apellido debe tener al menos ${MIN_NAME_LENGTH} caracteres`
+  } else if (trimmedLastName.length > MAX_NAME_LENGTH) {
+    errors.last_name = `El apellido no puede exceder ${MAX_NAME_LENGTH} caracteres`
+  }
+
+  const trimmedEmail = data.email.trim()
+  if (!trimmedEmail) {
+    errors.email = 'El email es requerido'
+  } else if (!PATTERNS.EMAIL.test(trimmedEmail)) {
+    errors.email = 'Email invalido'
+  }
+
+  if (!data.phone.trim()) {
+    errors.phone = 'El telefono es requerido'
+  } else if (!isValidPhone(data.phone)) {
+    errors.phone = 'Telefono invalido (ej: +54 11 1234-5678)'
+  }
+
+  const trimmedDni = data.dni.trim()
+  if (!trimmedDni) {
+    errors.dni = 'El DNI es requerido'
+  } else if (!/^\d{7,9}$/.test(trimmedDni)) {
+    errors.dni = 'DNI invalido (debe tener entre 7 y 9 digitos)'
+  }
+
+  if (!data.hire_date) {
+    errors.hire_date = 'La fecha de ingreso es requerida'
+  } else {
+    const hireDate = new Date(data.hire_date)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    if (isNaN(hireDate.getTime())) {
+      errors.hire_date = 'Fecha de ingreso invalida'
+    } else if (hireDate > today) {
+      errors.hire_date = 'La fecha de ingreso no puede ser futura'
+    }
+  }
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+  }
+}
+
+// Role validation
+export function validateRole(data: CreateRoleData): ValidationResult<CreateRoleData> {
+  const errors: ValidationErrors<CreateRoleData> = {}
+
+  const trimmedName = data.name.trim()
+  if (!trimmedName) {
+    errors.name = 'El nombre del rol es requerido'
+  } else if (trimmedName.length < MIN_NAME_LENGTH) {
+    errors.name = `El nombre debe tener al menos ${MIN_NAME_LENGTH} caracteres`
+  } else if (trimmedName.length > MAX_NAME_LENGTH) {
+    errors.name = `El nombre no puede exceder ${MAX_NAME_LENGTH} caracteres`
+  }
+
+  const trimmedDescription = data.description.trim()
+  if (!trimmedDescription) {
+    errors.description = 'La descripcion es requerida'
+  } else if (trimmedDescription.length > MAX_DESCRIPTION_LENGTH) {
+    errors.description = `La descripcion no puede exceder ${MAX_DESCRIPTION_LENGTH} caracteres`
   }
 
   return {

@@ -1,8 +1,12 @@
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { PageContainer } from '../components/layout/PageContainer'
 import { Users } from 'lucide-react'
 import { helpContent } from '../utils/helpContent'
 
 export function HistoryCustomersPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Historial por Cliente')
+
   return (
     <PageContainer
       title="Historial por Clientes"

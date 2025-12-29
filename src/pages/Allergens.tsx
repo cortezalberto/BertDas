@@ -1,5 +1,7 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useActionState } from 'react'
 import { Plus, Pencil, Trash2 } from 'lucide-react'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import { useFormModal, useConfirmDialog, usePagination } from '../hooks'
 import { PageContainer } from '../components/layout'
 import {
   Card,
@@ -13,7 +15,6 @@ import {
   Pagination,
   HelpButton,
 } from '../components/ui'
-import { usePagination } from '../hooks/usePagination'
 import {
   useAllergenStore,
   selectAllergens,
@@ -21,10 +22,11 @@ import {
 import { useProductStore, selectProducts } from '../stores/productStore'
 import { cascadeDeleteAllergen } from '../services/cascadeService'
 import { toast } from '../stores/toastStore'
-import { validateAllergen, type ValidationErrors } from '../utils/validation'
+import { validateAllergen } from '../utils/validation'
 import { handleError } from '../utils/logger'
 import { helpContent } from '../utils/helpContent'
 import type { Allergen, AllergenFormData, TableColumn } from '../types'
+import type { FormState } from '../types/form'
 
 const initialFormData: AllergenFormData = {
   name: '',
@@ -34,18 +36,18 @@ const initialFormData: AllergenFormData = {
 }
 
 export function AllergensPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Alérgenos')
+
   const allergens = useAllergenStore(selectAllergens)
   const addAllergen = useAllergenStore((s) => s.addAllergen)
   const updateAllergen = useAllergenStore((s) => s.updateAllergen)
 
   const products = useProductStore(selectProducts)
 
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [isDeleteOpen, setIsDeleteOpen] = useState(false)
-  const [selectedAllergen, setSelectedAllergen] = useState<Allergen | null>(null)
-  const [formData, setFormData] = useState<AllergenFormData>(initialFormData)
-  const [errors, setErrors] = useState<ValidationErrors<AllergenFormData>>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  // SPRINT 11: Use custom hooks for modal and dialog state
+  const modal = useFormModal<AllergenFormData>(initialFormData)
+  const deleteDialog = useConfirmDialog<Allergen>()
 
   const sortedAllergens = useMemo(
     () => [...allergens].sort((a, b) => a.name.localeCompare(b.name)),
@@ -68,65 +70,65 @@ export function AllergensPage() {
     [products]
   )
 
-  const openCreateModal = useCallback(() => {
-    setSelectedAllergen(null)
-    setFormData(initialFormData)
-    setErrors({})
-    setIsModalOpen(true)
-  }, [])
-
-  const openEditModal = useCallback((allergen: Allergen) => {
-    setSelectedAllergen(allergen)
-    setFormData({
-      name: allergen.name,
-      icon: allergen.icon || '',
-      description: allergen.description || '',
-      is_active: allergen.is_active ?? true,
-    })
-    setErrors({})
-    setIsModalOpen(true)
-  }, [])
-
-  const openDeleteDialog = useCallback((allergen: Allergen) => {
-    setSelectedAllergen(allergen)
-    setIsDeleteOpen(true)
-  }, [])
-
-  const handleSubmit = useCallback(() => {
-    const validation = validateAllergen(formData)
-    if (!validation.isValid) {
-      setErrors(validation.errors)
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      if (selectedAllergen) {
-        updateAllergen(selectedAllergen.id, formData)
-        toast.success('Alergeno actualizado correctamente')
-      } else {
-        addAllergen(formData)
-        toast.success('Alergeno creado correctamente')
+  // REACT 19 IMPROVEMENT: Use useActionState for form handling
+  const submitAction = useCallback(
+    async (_prevState: FormState<AllergenFormData>, formData: FormData): Promise<FormState<AllergenFormData>> => {
+      const data: AllergenFormData = {
+        name: formData.get('name') as string,
+        icon: formData.get('icon') as string,
+        description: formData.get('description') as string,
+        is_active: formData.get('is_active') === 'on',
       }
-      setIsModalOpen(false)
-    } catch (error) {
-      const message = handleError(error, 'AllergensPage.handleSubmit')
-      toast.error(`Error al guardar el alergeno: ${message}`)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }, [formData, selectedAllergen, updateAllergen, addAllergen])
 
+      const validation = validateAllergen(data)
+      if (!validation.isValid) {
+        return { errors: validation.errors, isSuccess: false }
+      }
+
+      try {
+        if (modal.selectedItem) {
+          updateAllergen(modal.selectedItem.id, data)
+          toast.success('Alergeno actualizado correctamente')
+        } else {
+          addAllergen(data)
+          toast.success('Alergeno creado correctamente')
+        }
+        return { isSuccess: true, message: 'Guardado correctamente' }
+      } catch (error) {
+        const message = handleError(error, 'AllergensPage.submitAction')
+        toast.error(`Error al guardar el alergeno: ${message}`)
+        return { isSuccess: false, message: `Error: ${message}` }
+      }
+    },
+    [modal.selectedItem, updateAllergen, addAllergen]
+  )
+
+  const [state, formAction, isPending] = useActionState<FormState<AllergenFormData>, FormData>(
+    submitAction,
+    { isSuccess: false }
+  )
+
+  // SPRINT 11: Close modal on success using modal.close()
+  if (state.isSuccess && modal.isOpen) {
+    modal.close()
+  }
+
+  // SPRINT 11: Simplified modal handlers using custom hook
+  const openEditModal = useCallback((allergen: Allergen) => {
+    modal.openEdit(allergen)
+  }, [modal])
+
+  // SPRINT 11: Simplified delete handler
   const handleDelete = useCallback(() => {
-    if (!selectedAllergen) return
+    if (!deleteDialog.item) return
 
     try {
-      const productCount = getProductCount(selectedAllergen.id)
-      const result = cascadeDeleteAllergen(selectedAllergen.id)
+      const productCount = getProductCount(deleteDialog.item.id)
+      const result = cascadeDeleteAllergen(deleteDialog.item.id)
 
       if (!result.success) {
         toast.error(result.error || 'Error al eliminar el alergeno')
-        setIsDeleteOpen(false)
+        deleteDialog.close()
         return
       }
 
@@ -137,12 +139,12 @@ export function AllergensPage() {
       }
 
       toast.success('Alergeno eliminado correctamente')
-      setIsDeleteOpen(false)
+      deleteDialog.close()
     } catch (error) {
       const message = handleError(error, 'AllergensPage.handleDelete')
       toast.error(`Error al eliminar el alergeno: ${message}`)
     }
-  }, [selectedAllergen, getProductCount])
+  }, [deleteDialog, getProductCount])
 
   const columns: TableColumn<Allergen>[] = useMemo(
     () => [
@@ -227,7 +229,7 @@ export function AllergensPage() {
         ),
       },
     ],
-    [getProductCount, openEditModal, openDeleteDialog]
+    [getProductCount, openEditModal, deleteDialog.open]
   )
 
   return (
@@ -236,7 +238,7 @@ export function AllergensPage() {
       description="Administra los alergenos para los productos del menu"
       helpContent={helpContent.allergens}
       actions={
-        <Button onClick={openCreateModal} leftIcon={<Plus className="w-4 h-4" />}>
+        <Button onClick={modal.openCreate} leftIcon={<Plus className="w-4 h-4" />}>
           Nuevo Alergeno
         </Button>
       }
@@ -257,24 +259,24 @@ export function AllergensPage() {
         />
       </Card>
 
-      {/* Create/Edit Modal */}
+      {/* SPRINT 11: Modal using useFormModal hook */}
       <Modal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title={selectedAllergen ? 'Editar Alergeno' : 'Nuevo Alergeno'}
+        isOpen={modal.isOpen}
+        onClose={modal.close}
+        title={modal.selectedItem ? 'Editar Alergeno' : 'Nuevo Alergeno'}
         size="md"
         footer={
           <>
-            <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
+            <Button variant="ghost" onClick={modal.close}>
               Cancelar
             </Button>
-            <Button onClick={handleSubmit} isLoading={isSubmitting}>
-              {selectedAllergen ? 'Guardar' : 'Crear'}
+            <Button type="submit" form="allergen-form" isLoading={isPending}>
+              {modal.selectedItem ? 'Guardar' : 'Crear'}
             </Button>
           </>
         }
       >
-        <div className="space-y-4">
+        <form id="allergen-form" action={formAction} className="space-y-4">
           <div className="flex items-center gap-2 mb-2">
             <HelpButton
               title="Formulario de Alergeno"
@@ -312,49 +314,53 @@ export function AllergensPage() {
 
           <Input
             label="Nombre"
-            value={formData.name}
+            name="name"
+            value={modal.formData.name}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, name: e.target.value }))
+              modal.setFormData((prev) => ({ ...prev, name: e.target.value }))
             }
             placeholder="Ej: Gluten, Lacteos, Frutos Secos"
-            error={errors.name}
+            error={state.errors?.name}
           />
 
           <Input
             label="Icono (emoji)"
-            value={formData.icon}
+            name="icon"
+            value={modal.formData.icon}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, icon: e.target.value }))
+              modal.setFormData((prev) => ({ ...prev, icon: e.target.value }))
             }
             placeholder="Ej: 🌾, 🥛, 🥜"
           />
 
           <Input
             label="Descripcion"
-            value={formData.description}
+            name="description"
+            value={modal.formData.description}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, description: e.target.value }))
+              modal.setFormData((prev) => ({ ...prev, description: e.target.value }))
             }
             placeholder="Descripcion del alergeno"
           />
 
           <Toggle
             label="Alergeno activo"
-            checked={formData.is_active}
+            name="is_active"
+            checked={modal.formData.is_active}
             onChange={(e) =>
-              setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
+              modal.setFormData((prev) => ({ ...prev, is_active: e.target.checked }))
             }
           />
-        </div>
+        </form>
       </Modal>
 
-      {/* Delete Confirmation */}
+      {/* SPRINT 11: Delete confirmation using useConfirmDialog hook */}
       <ConfirmDialog
-        isOpen={isDeleteOpen}
-        onClose={() => setIsDeleteOpen(false)}
+        isOpen={deleteDialog.isOpen}
+        onClose={deleteDialog.close}
         onConfirm={handleDelete}
         title="Eliminar Alergeno"
-        message={`¿Estas seguro de eliminar "${selectedAllergen?.name}"? Los productos que lo tengan vinculado perderan esta referencia.`}
+        message={`¿Estas seguro de eliminar "${deleteDialog.item?.name}"? Los productos que lo tengan vinculado perderan esta referencia.`}
         confirmLabel="Eliminar"
       />
     </PageContainer>

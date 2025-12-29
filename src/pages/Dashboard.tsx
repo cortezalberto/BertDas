@@ -7,6 +7,7 @@ import { useBranchStore, selectBranches } from '../stores/branchStore'
 import { useCategoryStore, selectCategories } from '../stores/categoryStore'
 import { useProductStore, selectProducts } from '../stores/productStore'
 import { useRestaurantStore, selectRestaurant } from '../stores/restaurantStore'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { HOME_CATEGORY_NAME } from '../utils/constants'
 import { helpContent } from '../utils/helpContent'
 
@@ -103,6 +104,9 @@ const BranchCard = memo(function BranchCard({
 })
 
 export function DashboardPage() {
+  // REACT 19: Document metadata
+  useDocumentTitle('Dashboard')
+
   const navigate = useNavigate()
   const restaurant = useRestaurantStore(selectRestaurant)
   const branches = useBranchStore(selectBranches)
